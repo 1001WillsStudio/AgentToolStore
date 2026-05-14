@@ -1,0 +1,28 @@
+from typing import Optional, List
+from datetime import datetime
+from sqlmodel import Field, SQLModel, Relationship
+from sqlalchemy import Column, JSON
+
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    email: str
+    password_hash: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    tools: List["Tool"] = Relationship(back_populates="owner")
+
+class Tool(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    version: str
+    type: str  # 'api' or 'mcp'
+    description: str
+    definition: dict = Field(sa_column=Column(JSON)) # Stores the full JSON schema
+    
+    owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    owner: Optional[User] = Relationship(back_populates="tools")
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    downloads: int = Field(default=0)
