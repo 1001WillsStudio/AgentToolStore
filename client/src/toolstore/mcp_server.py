@@ -221,6 +221,15 @@ class ToolStoreMCPServer:
         action = args.get("action", "load")
         skill_name = tool_def["name"]
 
+        # Ensure the skill manager has this skill loaded
+        if not self._skills.get_skill(skill_name):
+            from toolstore.skill_manager import SkillManager
+            dirs = self._config.get_skill_dirs()
+            if dirs:
+                fresh = SkillManager(dirs)
+                fresh.scan()
+                self._skills = fresh
+
         if action == "load":
             body = self._skills.get_skill_body(skill_name)
             if body is None:
