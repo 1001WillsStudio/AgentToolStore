@@ -214,5 +214,11 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
             return f"Error: File '{file_path}' not found in skill '{skill_name}'."
         return content
 
+    elif skill_action == "run":
+        script = args.get("script", "")
+        if not script:
+            return "Error: 'script' argument is required for action='run'."
+        return sm.run_skill_script(skill_name, script)
+
     else:
         return f"Error: Unknown skill action '{skill_action}'. Use 'load', 'files', or 'file'."

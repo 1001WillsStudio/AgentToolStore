@@ -217,7 +217,7 @@ class ToolStoreMCPServer:
 
     def _execute_skill(self, tool_def: Dict[str, Any],
                        args: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a skill tool. Args: action (load/files/file), file_path?"""
+        """Execute a skill tool. Args: load/files/file/run, script?"""
         action = args.get("action", "load")
         skill_name = tool_def["name"]
 
@@ -262,6 +262,15 @@ class ToolStoreMCPServer:
                                              f"in skill '{skill_name}'"}],
                         "isError": True}
             return {"content": [{"type": "text", "text": content}]}
+
+        elif action == "run":
+            script = args.get("script", "")
+            if not script:
+                return {"content": [{"type": "text",
+                                     "text": "'script' argument required for action='run'"}],
+                        "isError": True}
+            output = self._skills.run_skill_script(skill_name, script)
+            return {"content": [{"type": "text", "text": output}]}
 
         else:
             return {"content": [{"type": "text",

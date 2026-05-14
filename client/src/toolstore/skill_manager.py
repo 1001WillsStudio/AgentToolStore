@@ -197,9 +197,13 @@ class SkillDefinition:
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "script": {
+                            "type": "string",
+                            "description": "Script to run from scripts/ dir (for action='run')",
+                        },
                         "action": {
                             "type": "string",
-                            "enum": ["load", "files", "file"],
+                            "enum": ["load", "files", "file", "run"],
                             "description": "load = read full SKILL.md, "
                                            "files = list bundled files, "
                                            "file = read a specific file",
@@ -281,6 +285,36 @@ class SkillManager:
         if target.is_file():
             return target.read_text(encoding="utf-8")
         return None
+
+    def run_skill_script(self, skill_name: str, script: str) -> str:
+        """Execute a script from the skill's scripts/ directory.
+
+        Returns stdout of the script as a string, or an error message.
+        """
+        import subprocess
+        sd = self._skills.get(skill_name)
+        if not sd:
+            return f"Error: Skill '{skill_name}' not found"
+        target = (sd.skill_dir / "scripts" / script).resolve()
+        if not str(target).startswith(str(sd.skill_dir)):
+            return "Error: Script path escapes skill directory"
+        if not target.is_file():
+            return f"Error: Script '{script}' not found in skill '{skill_name}'"
+        try:
+            result = subprocess.run(
+                [str(target)], capture_output=True, text=True, timeout=30,
+                cwd=str(sd.skill_dir)
+            )
+            output = result.stdout
+            if result.stderr:
+                output += "\n[stderr]\n" + result.stderr
+            if result.returncode != 0:
+                output += f"\n[exit code: {result.returncode}]"
+            return output or "(script produced no output)"
+        except subprocess.TimeoutExpired:
+            return "Error: Script timed out (30s)"
+        except Exception as exc:
+            return f"Error running script: {str(exc)}"
 
     def to_tool_definitions(self) -> List[Dict[str, Any]]:
         """Convert all loaded skills to ToolStore tool definitions."""
