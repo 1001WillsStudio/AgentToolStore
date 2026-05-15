@@ -24,6 +24,9 @@ toolstore = "toolstore.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolstore"]
+include = [
+    "src/toolstore/management/static/**/*",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra -q"

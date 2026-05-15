@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ToolStore — Management</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="ts-header">
+  <div class="ts-logo">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="currentColor"/><circle cx="16" cy="12" r="2" fill="currentColor"/><circle cx="10" cy="18" r="2" fill="currentColor"/></svg>
+    <span class="ts-logo-text">ToolStore</span>
+  </div>
+  <div class="ts-header-right">
+    <span id="ts-status" class="ts-status-dot"></span>
+    <span id="ts-status-text" class="ts-status-text">loading…</span>
+  </div>
+</header>
+
+<nav class="ts-tabs">
+  <button class="ts-tab active" data-tab="mcp">MCP Servers</button>
+  <button class="ts-tab" data-tab="skills">Skills</button>
+  <button class="ts-tab" data-tab="tools">All Tools</button>
+</nav>
+
+<main class="ts-main">
+
+  <!-- ═══ MCP Servers ═══ -->
+  <section id="tab-mcp" class="ts-tab-panel active">
+    <div class="ts-toolbar">
+      <button id="btn-add-mcp" class="ts-btn ts-btn-primary">+ Add MCP Server</button>
+      <button id="btn-refresh-mcp" class="ts-btn ts-btn-ghost" title="Refresh status">↻ Refresh</button>
+    </div>
+    <div id="mcp-list" class="ts-card-list"></div>
+    <div id="mcp-empty" class="ts-empty hidden">
+      <p>No MCP servers configured.</p>
+      <p class="ts-muted">Add one to extend your agent with external tools.</p>
+    </div>
+  </section>
+
+  <!-- ═══ Skills ═══ -->
+  <section id="tab-skills" class="ts-tab-panel">
+    <div class="ts-toolbar">
+      <button id="btn-add-skill" class="ts-btn ts-btn-primary">+ Register Skill</button>
+    </div>
+    <div id="skill-list" class="ts-card-list"></div>
+    <div id="skill-empty" class="ts-empty hidden">
+      <p>No skills registered.</p>
+      <p class="ts-muted">Skills are reusable prompt+code bundles your agent can invoke.</p>
+    </div>
+  </section>
+
+  <!-- ═══ All Tools ═══ -->
+  <section id="tab-tools" class="ts-tab-panel">
+    <div class="ts-toolbar">
+      <span id="tools-summary" class="ts-muted"></span>
+    </div>
+    <div id="tools-list" class="ts-card-list"></div>
+    <div id="tools-empty" class="ts-empty hidden">
+      <p>No external tools registered yet.</p>
+      <p class="ts-muted">Connect an MCP server or register a skill to get started.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══ Modals ═══ -->
+<div id="modal-overlay" class="ts-modal-overlay hidden"></div>
+
+<!-- Add MCP modal -->
+<div id="modal-mcp" class="ts-modal hidden">
+  <div class="ts-modal-header">
+    <h3>Add MCP Server</h3>
+    <button class="ts-modal-close" data-close="modal-mcp">&times;</button>
+  </div>
+  <form id="form-mcp" class="ts-form">
+    <label>Server ID <input name="server_id" required placeholder="e.g. github"></label>
+    <label>Transport
+      <select name="transport" id="mcp-transport">
+        <option value="stdio">stdio (subprocess)</option>
+        <option value="sse">sse (Server-Sent Events)</option>
+      </select>
+    </label>
+    <div id="mcp-stdio-fields">
+      <label>Command <input name="command" placeholder="e.g. npx"></label>
+      <label>Arguments <input name="args" placeholder="e.g. -y @mcp/server-github"></label>
+    </div>
+    <div id="mcp-sse-fields" class="hidden">
+      <label>URL <input name="url" placeholder="http://localhost:9999/sse"></label>
+    </div>
+    <label>Environment (KEY=value, one per line)
+      <textarea name="env" rows="3" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+    </label>
+    <label>Default exposure for discovered tools
+      <select name="exposure_default">
+        <option value="secondary">Secondary (via tool_store)</option>
+        <option value="primary">Primary (native function call)</option>
+      </select>
+    </label>
+    <label class="ts-checkbox"><input type="checkbox" name="auto_connect" checked> Auto-connect after adding</label>
+    <div class="ts-form-actions">
+      <button type="submit" class="ts-btn ts-btn-primary">Add Server</button>
+      <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- Register Skill modal -->
+<div id="modal-skill" class="ts-modal hidden">
+  <div class="ts-modal-header">
+    <h3>Register Skill</h3>
+    <button class="ts-modal-close" data-close="modal-skill">&times;</button>
+  </div>
+  <form id="form-skill" class="ts-form">
+    <label>Skill name <input name="name" required placeholder="e.g. deploy_to_prod"></label>
+    <label>Description <textarea name="description" rows="2" placeholder="What this skill does…"></textarea></label>
+    <label>Code (Python) <textarea name="code" rows="8" placeholder="def run(**kwargs):&#10;    return 'done'"></textarea></label>
+    <label>Exposure
+      <select name="exposure">
+        <option value="secondary">Secondary (via tool_store)</option>
+        <option value="primary">Primary (native function call)</option>
+      </select>
+    </label>
+    <label class="ts-checkbox"><input type="checkbox" name="parallel_safe"> Parallel-safe</label>
+    <label class="ts-checkbox"><input type="checkbox" name="subagent_safe"> Subagent-safe</label>
+    <div class="ts-form-actions">
+      <button type="submit" class="ts-btn ts-btn-primary">Register</button>
+      <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-skill">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
