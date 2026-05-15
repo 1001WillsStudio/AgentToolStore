@@ -98,10 +98,14 @@ document.querySelectorAll('.ts-modal-close, [data-close]').forEach(function (el)
 // MCP transport toggle
 // ═══════════════════════════════════════════════════════════════════════
 
+function showMcpFields(transport) {
+  document.getElementById('mcp-sse-fields').classList.toggle('hidden', transport !== 'sse');
+  document.getElementById('mcp-stdio-fields').classList.toggle('hidden', transport !== 'stdio');
+  document.getElementById('mcp-folder-fields').classList.toggle('hidden', transport !== 'folder');
+}
+
 document.getElementById('mcp-transport').addEventListener('change', function () {
-  var isStdio = this.value === 'stdio';
-  document.getElementById('mcp-stdio-fields').classList.toggle('hidden', !isStdio);
-  document.getElementById('mcp-sse-fields').classList.toggle('hidden', isStdio);
+  showMcpFields(this.value);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -215,7 +219,7 @@ function renderToolRow(name, tool) {
     + '<div class="ts-tool-desc">' + esc(tool.description || '') + '</div>'
     + '</div>'
     + '<div class="ts-tool-controls">'
-    + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)" title="Click to cycle: primary → secondary → disabled">' + exp + '</span>'
+    + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)" title="Click to cycle: primary → secondary → store → disabled">' + exp + '</span>'
     + '</div>'
     + '</div>';
 }
@@ -224,7 +228,7 @@ function renderToolRow(name, tool) {
 // Cycle exposure
 // ═══════════════════════════════════════════════════════════════════════
 
-var EXPOSURE_ORDER = ['primary', 'secondary', 'disabled'];
+var EXPOSURE_ORDER = ['primary', 'secondary', 'store', 'disabled'];
 
 async function cycleExposure(name, event) {
   var tool = state.tools[name];
@@ -307,8 +311,7 @@ async function removeMcp(id) {
 document.getElementById('btn-connect-mcp').addEventListener('click', function () {
   document.getElementById('form-mcp').reset();
   document.getElementById('mcp-transport').value = 'sse';
-  document.getElementById('mcp-stdio-fields').classList.add('hidden');
-  document.getElementById('mcp-sse-fields').classList.remove('hidden');
+  showMcpFields('sse');
   openModal('modal-mcp');
 });
 
@@ -324,6 +327,12 @@ document.getElementById('form-mcp').addEventListener('submit', async function (e
   if (payload.transport === 'stdio') {
     payload.command = fd.get('command').trim();
     payload.args = fd.get('args').trim().split(/\s+/).filter(Boolean);
+  } else if (payload.transport === 'folder') {
+    payload.folder = fd.get('folder').trim();
+    payload.command = fd.get('command').trim();
+    payload.args = fd.get('args').trim().split(/\s+/).filter(Boolean);
+    payload.sub_transport = fd.get('sub_transport');
+    payload.url = fd.get('url').trim();
   } else {
     payload.url = fd.get('url').trim();
   }
@@ -458,6 +467,91 @@ document.getElementById('form-skill').addEventListener('submit', async function 
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// File browser
+// ═══════════════════════════════════════════════════════════════════════
+
+var browserTarget = null;
+
+document.getElementById('btn-browse-skill').addEventListener('click', function () {
+  browserTarget = 'skill';
+  document.getElementById('browser-title').textContent = 'Browse Skill File';
+  navigateBrowser(document.getElementById('skill-path').value || '~');
+  openModal('modal-browser');
+});
+
+document.getElementById('btn-browser-go').addEventListener('click', function () {
+  navigateBrowser(document.getElementById('browser-path').value);
+});
+
+document.getElementById('browser-path').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') navigateBrowser(this.value);
+});
+
+document.getElementById('btn-browser-select').addEventListener('click', function () {
+  var path = document.getElementById('browser-path').value;
+  if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
+  closeModal('modal-browser');
+});
+
+async function navigateBrowser(path) {
+  var list = document.getElementById('browser-list');
+  list.innerHTML = '<div class="ts-browser-entry" style="color:var(--ts-text-muted);">Loading…</div>';
+  try {
+    var res = await fetch('/api/files?path=' + encodeURIComponent(path));
+    var data = await res.json();
+    if (data.error) { list.innerHTML = '<div class="ts-browser-entry" style="color:var(--ts-danger);">' + esc(data.error) + '</div>'; return; }
+    document.getElementById('browser-path').value = data.path;
+    var html = '<div class="ts-browser-entry ts-browser-up" onclick="navigateBrowser(\'' + escAttr(data.parent) + '\')">📁 ..</div>';
+    data.entries.forEach(function (e) {
+      var icon = e.type === 'directory' ? '📁' : '📄';
+      var cls = e.type === 'directory' ? ' dir' : '';
+      var fp = data.path + '/' + e.name;
+      if (e.type === 'directory') {
+        html += '<div class="ts-browser-entry' + cls + '" onclick="navigateBrowser(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
+      } else {
+        html += '<div class="ts-browser-entry' + cls + '" onclick="selectBrowserFile(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
+      }
+    });
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<div class="ts-browser-entry" style="color:var(--ts-danger);">' + esc(String(err)) + '</div>';
+  }
+}
+
+function selectBrowserFile(path) {
+  document.getElementById('browser-path').value = path;
+  if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
+  closeModal('modal-browser');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Load Skills from Folder
+// ═══════════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-load-folder').addEventListener('click', function () {
+  browserTarget = 'skill-folder';
+  document.getElementById('browser-title').textContent = 'Select Skills Folder';
+  navigateBrowser('~');
+  var btn = document.getElementById('btn-browser-select');
+  btn.textContent = 'Scan This Folder';
+  btn.onclick = async function () {
+    var path = document.getElementById('browser-path').value;
+    closeModal('modal-browser');
+    try {
+      var resp = await api._fetch('POST', '/api/skills/folder', { path: path, exposure: 'secondary' });
+      var reg = resp.registered || [];
+      var fail = resp.failed || [];
+      toast('Registered: ' + (reg.join(', ') || 'none') + (fail.length ? ' | Failed: ' + fail.map(function(f){return f.name;}).join(', ') : ''));
+      state.skills = await api.listSkills();
+      refreshSkills();
+    } catch (err) {
+      toast('Failed: ' + err.message, 'error');
+    }
+  };
+  openModal('modal-browser');
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // All Tools tab
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -477,8 +571,9 @@ async function refreshTools() {
 
   var primary = names.filter(function (n) { return state.tools[n].exposure === 'primary'; }).length;
   var secondary = names.filter(function (n) { return state.tools[n].exposure === 'secondary'; }).length;
+  var store = names.filter(function (n) { return state.tools[n].exposure === 'store'; }).length;
   var disabled = names.filter(function (n) { return state.tools[n].exposure === 'disabled'; }).length;
-  summary.textContent = names.length + ' tools — ' + primary + ' primary, ' + secondary + ' secondary, ' + disabled + ' disabled';
+  summary.textContent = names.length + ' tools — ' + primary + ' primary, ' + secondary + ' secondary, ' + store + ' store, ' + disabled + ' disabled';
 
   list.innerHTML = names.map(function (name) {
     var t = state.tools[name];

@@ -152,7 +152,9 @@ input, select, textarea { font: inherit; }
 .ts-exposure.primary { background: var(--ts-primary-light); color: var(--ts-primary); border-color: var(--ts-primary); }
 .ts-exposure.secondary { background: #fef3c7; color: #92400e; border-color: var(--ts-warn); }
 .ts-exposure.disabled { background: var(--ts-bg-secondary); color: var(--ts-text-muted); text-decoration: line-through; }
+.ts-exposure.store { background: #ede9fe; color: #5b21b6; border-color: #8b5cf6; }
 
+/* ── status badges ────────────────────────────────────────────────────── */
 /* ── status badges ────────────────────────────────────────────────────── */
 
 .ts-status-badge {
@@ -227,6 +229,22 @@ input, select, textarea { font: inherit; }
 .ts-toast.error { background: var(--ts-danger); }
 @keyframes ts-fade-in { from { opacity: 0; transform: translateY(8px); } }
 
+/* ── file browser ───────────────────────────────────────────────────── */
+
+.ts-browser { max-height: 260px; overflow-y: auto; border: 1px solid var(--ts-border); border-radius: var(--ts-radius); }
+.ts-browser-entry {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--ts-border);
+  font-family: var(--ts-mono);
+}
+.ts-browser-entry:last-child { border-bottom: none; }
+.ts-browser-entry:hover { background: var(--ts-bg-secondary); }
+.ts-browser-entry.dir { font-weight: 500; }
+.ts-browser-up { color: var(--ts-text-muted); font-style: italic; }
+.ts-path-row { display: flex; gap: 8px; align-items: center; }
+.ts-path-row input { flex: 1; }
+
+/* ── responsiveness ───────────────────────────────────────────────────── */
 /* ── responsiveness ───────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .ts-main { padding: 12px; }

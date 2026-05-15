@@ -82,10 +82,26 @@
       <select name="transport" id="mcp-transport">
         <option value="sse">SSE (HTTP endpoint)</option>
         <option value="stdio">stdio (local subprocess)</option>
+        <option value="folder">folder (ToolStore managed)</option>
       </select>
     </label>
     <div id="mcp-sse-fields">
       <label>Server URL <input name="url" required placeholder="http://localhost:9999/sse"></label>
+    </div>
+    <div id="mcp-folder-fields" class="hidden">
+      <label>Folder path <input name="folder" placeholder="~/my-mcp-server"></label>
+      <label>Command <input name="command" placeholder="python"></label>
+      <label>Arguments <input name="args" placeholder="server.py --port 9999"></label>
+      <label>Environment (KEY=value, one per line)
+        <textarea name="env" rows="3" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+      </label>
+      <label>Sub-transport
+        <select name="sub_transport">
+          <option value="sse">SSE</option>
+          <option value="stdio">stdio</option>
+        </select>
+      </label>
+      <label>Server URL <input name="url" placeholder="http://localhost:9999/sse"></label>
     </div>
     <div id="mcp-stdio-fields" class="hidden">
       <label>Command <input name="command" placeholder="e.g. npx"></label>
@@ -118,7 +134,10 @@
     <p class="ts-form-hint">Register an already-completed skill file so your agent can use it. The skill must already exist on disk.</p>
     <label>Skill name <input name="name" required placeholder="e.g. deploy_to_prod"></label>
     <label>Description <textarea name="description" rows="2" placeholder="What this skill does…"></textarea></label>
-    <label>File path <input name="path" required placeholder="~/.toolstore/skills/deploy_to_prod.py"></label>
+    <div class="ts-path-row">
+      <label style="flex:1;">File path <input name="path" id="skill-path" required placeholder="~/.toolstore/skills/deploy_to_prod.py"></label>
+      <button type="button" class="ts-btn ts-btn-ghost ts-btn-sm" id="btn-browse-skill" style="margin-top:18px;">Browse</button>
+    </div>
     <p class="ts-form-hint" style="margin-top:-8px;">Path to the Python file. Use <code>~</code> for home directory, or an absolute path.</p>
     <label>Exposure
       <select name="exposure">
@@ -132,7 +151,30 @@
       <button type="submit" class="ts-btn ts-btn-primary">Register</button>
       <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-skill">Cancel</button>
     </div>
-  </form>
+</form>
+</div>
+
+<!-- File Browser modal -->
+<div id="modal-browser" class="ts-modal hidden">
+  <div class="ts-modal-header">
+    <h3 id="browser-title">Browse Files</h3>
+    <button class="ts-modal-close" data-close="modal-browser">&times;</button>
+  </div>
+  <div class="ts-form">
+    <div class="ts-path-row">
+      <input id="browser-path" type="text" placeholder="/home/user/skills">
+      <button type="button" class="ts-btn ts-btn-ghost ts-btn-sm" id="btn-browser-go">Go</button>
+    </div>
+    <div id="browser-list" class="ts-browser"></div>
+    <div class="ts-form-actions">
+      <button type="button" class="ts-btn ts-btn-primary ts-btn-sm" id="btn-browser-select">Select This Folder</button>
+      <button type="button" class="ts-btn ts-btn-ghost ts-btn-sm" data-close="modal-browser">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="ts-toolbar" style="margin-top:12px;">
+  <button id="btn-load-folder" class="ts-btn ts-btn-ghost">Load Skills from Folder</button>
 </div>
 
 <script src="/static/app.js"></script>

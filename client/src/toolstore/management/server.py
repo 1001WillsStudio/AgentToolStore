@@ -24,7 +24,11 @@ Or from code::
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
 import threading
+import time
 import urllib.parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -112,7 +116,7 @@ def save_config(cfg: dict) -> None:
 
 # In-process cache of connected clients so we can check status.
 _connected_clients: dict[str, FullMCPClient] = {}
-
+_mcp_processes: dict[str, subprocess.Popen] = {}
 
 def _mcp_status(server_id: str) -> str:
     """'connected' | 'disconnected'."""
@@ -121,21 +125,43 @@ def _mcp_status(server_id: str) -> str:
     return "disconnected"
 
 
+def _start_mcp_folder(server_id: str, srv: dict) -> bool:
+    fp = Path(srv.get("folder", "")).expanduser().resolve()
+    if not fp.is_dir():
+        raise RuntimeError(f"MCP folder not found: {fp}")
+    command = srv.get("command", "python")
+    args = list(srv.get("args", []))
+    env = {**os.environ, **(srv.get("env") or {})}
+    for k, v in list(env.items()):
+        if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+            env[k] = os.environ.get(v[2:-1], "")
+    proc = subprocess.Popen([command] + args, cwd=str(fp), env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    _mcp_processes[server_id] = proc
+    return True
+
+
 def _connect_and_discover(server_id: str, srv: dict) -> list[dict]:
-    """Connect to *srv*, cache the client, return its tool list."""
-    transport_type = srv.get("transport", "stdio")
+    transport_type = srv.get("transport", "sse")
+    if transport_type == "folder":
+        _start_mcp_folder(server_id, srv)
+        time.sleep(1.5)
+        sub_transport = srv.get("sub_transport", "sse")
+        url = srv.get("url", "")
+    else:
+        sub_transport = transport_type
+        url = srv.get("url", "")
     client = FullMCPClient(server_id, {
-        "transport": transport_type,
+        "transport": sub_transport,
         "command": srv.get("command", ""),
         "args": srv.get("args", []),
-        "url": srv.get("url", ""),
+        "url": url,
         "env": srv.get("env", {}),
         "timeout": srv.get("timeout", 30),
     })
     client.connect()
     tools_info = client.list_tools()
     _connected_clients[server_id] = client
-
     tools: list[dict] = []
     for t in tools_info:
         tools.append({
@@ -146,7 +172,22 @@ def _connect_and_discover(server_id: str, srv: dict) -> list[dict]:
     return tools
 
 
+def _shutdown_mcp_process(server_id: str) -> None:
+    proc = _mcp_processes.pop(server_id, None)
+    if proc is None:
+        return
+    try:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    except Exception:
+        pass
+
+
 def _disconnect_server(server_id: str) -> None:
+    _shutdown_mcp_process(server_id)
     client = _connected_clients.pop(server_id, None)
     if client:
         try:
@@ -158,6 +199,8 @@ def _disconnect_server(server_id: str) -> None:
 def _disconnect_all() -> None:
     for cid in list(_connected_clients.keys()):
         _disconnect_server(cid)
+    for pid in list(_mcp_processes.keys()):
+        _shutdown_mcp_process(pid)
     try:
         disconnect_all()
     except Exception:
@@ -192,6 +235,8 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._list_mcp()
             elif p == "/api/skills":
                 self._json(load_config().get("skills", {}))
+            elif p == "/api/files":
+                self._list_files()
             elif p.startswith("/static/"):
                 self._serve_static(p)
             else:
@@ -207,6 +252,8 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._add_mcp(body)
             elif p == "/api/skills":
                 self._register_skill(body)
+            elif p == "/api/skills/folder":
+                self._register_skill_folder(body)
             elif p.endswith("/connect") and "/api/mcp/servers/" in p:
                 sid = p.rsplit("/", 2)[-2]
                 self._connect_mcp(sid)
@@ -312,7 +359,7 @@ class _Handler(SimpleHTTPRequestHandler):
         if sid in servers:
             self._json({"error": "Server already exists"}, 409); return
 
-        transport = body.get("transport", "stdio")
+        transport = body.get("transport", "sse")
         srv: dict[str, Any] = {
             "transport": transport,
             "enabled": body.get("enabled", True),
@@ -321,6 +368,12 @@ class _Handler(SimpleHTTPRequestHandler):
         if transport == "stdio":
             srv["command"] = body.get("command", "")
             srv["args"] = body.get("args", [])
+        elif transport == "folder":
+            srv["folder"] = body.get("folder", "")
+            srv["sub_transport"] = body.get("sub_transport", "sse")
+            srv["command"] = body.get("command", "")
+            srv["args"] = body.get("args", [])
+            srv["url"] = body.get("url", "")
         else:
             srv["url"] = body.get("url", "")
         env = body.get("env")
@@ -394,7 +447,57 @@ class _Handler(SimpleHTTPRequestHandler):
         save_config(cfg)
         self._json({"success": True})
 
-    # ── API: skills ──────────────────────────────────────────────────────
+    # ── API: file browser ──────────────────────────────────────────────
+
+    def _list_files(self):
+        q = urllib.parse.urlparse(self.path).query
+        params = urllib.parse.parse_qs(q)
+        path = params.get("path", [""])[0] or os.path.expanduser("~")
+        fp = Path(path).expanduser().resolve()
+        if not fp.is_dir():
+            self._json({"error": "Not a directory"}, 400); return
+        entries = []
+        try:
+            for child in sorted(fp.iterdir()):
+                try:
+                    is_dir = child.is_dir()
+                except OSError:
+                    is_dir = False
+                entries.append({
+                    "name": child.name,
+                    "type": "directory" if is_dir else "file",
+                })
+        except PermissionError:
+            self._json({"error": "Permission denied"}, 403); return
+        self._json({"path": str(fp), "parent": str(fp.parent), "entries": entries})
+
+    # ── API: skills folder ─────────────────────────────────────────────
+
+    def _register_skill_folder(self, body: dict):
+        path = body.get("path", "").strip()
+        if not path:
+            self._json({"error": "path is required"}, 400); return
+        fp = Path(path).expanduser().resolve()
+        if not fp.is_dir():
+            self._json({"error": f"Not a directory: {fp}"}, 400); return
+        registered = []
+        failed = []
+        for py_file in sorted(fp.glob("*.py")):
+            name = py_file.stem
+            try:
+                body_single = {
+                    "name": name,
+                    "path": str(py_file),
+                    "description": body.get("description", ""),
+                    "exposure": body.get("exposure", "secondary"),
+                    "parallel_safe": body.get("parallel_safe", False),
+                    "subagent_safe": body.get("subagent_safe", False),
+                }
+                self._register_skill(body_single)
+                registered.append(name)
+            except Exception as exc:
+                failed.append({"name": name, "error": str(exc)})
+        self._json({"success": True, "registered": registered, "failed": failed})
 
     def _register_skill(self, body: dict):
         name = body.get("name", "").strip()
@@ -546,6 +649,8 @@ class ManagementServer:
         if self._httpd:
             self._httpd.shutdown()
             self._httpd = None
+        for pid in list(_mcp_processes.keys()):
+            _shutdown_mcp_process(pid)
         _disconnect_all()
 
 
