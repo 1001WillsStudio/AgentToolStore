@@ -211,6 +211,8 @@ input, select, textarea { font: inherit; }
 }
 .ts-form textarea { resize: vertical; font-family: var(--ts-mono); font-size: 12px; }
 .ts-checkbox { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
+.ts-form-hint { font-size: 12px; color: var(--ts-text-muted); margin: -8px 0 4px; line-height: 1.4; }
+.ts-form-hint code { font-family: var(--ts-mono); font-size: 11px; background: var(--ts-bg-secondary); padding: 1px 5px; border-radius: 3px; }
 .ts-form-actions { display: flex; gap: 10px; margin-top: 6px; }
 
 /* ── toast ────────────────────────────────────────────────────────────── */

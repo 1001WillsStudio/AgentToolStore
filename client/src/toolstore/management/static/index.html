@@ -30,25 +30,25 @@
   <!-- ═══ MCP Servers ═══ -->
   <section id="tab-mcp" class="ts-tab-panel active">
     <div class="ts-toolbar">
-      <button id="btn-add-mcp" class="ts-btn ts-btn-primary">+ Add MCP Server</button>
+      <button id="btn-connect-mcp" class="ts-btn ts-btn-primary">+ Connect to MCP Server</button>
       <button id="btn-refresh-mcp" class="ts-btn ts-btn-ghost" title="Refresh status">↻ Refresh</button>
     </div>
     <div id="mcp-list" class="ts-card-list"></div>
     <div id="mcp-empty" class="ts-empty hidden">
-      <p>No MCP servers configured.</p>
-      <p class="ts-muted">Add one to extend your agent with external tools.</p>
+      <p>No MCP servers connected.</p>
+      <p class="ts-muted">Connect to an already-running MCP server to make its tools available to your agent.</p>
     </div>
   </section>
 
   <!-- ═══ Skills ═══ -->
   <section id="tab-skills" class="ts-tab-panel">
     <div class="ts-toolbar">
-      <button id="btn-add-skill" class="ts-btn ts-btn-primary">+ Register Skill</button>
+      <button id="btn-register-skill" class="ts-btn ts-btn-primary">+ Register Skill from File</button>
     </div>
     <div id="skill-list" class="ts-card-list"></div>
     <div id="skill-empty" class="ts-empty hidden">
       <p>No skills registered.</p>
-      <p class="ts-muted">Skills are reusable prompt+code bundles your agent can invoke.</p>
+      <p class="ts-muted">Register already-completed skill files to make them callable by your agent.</p>
     </div>
   </section>
 
@@ -59,7 +59,7 @@
     </div>
     <div id="tools-list" class="ts-card-list"></div>
     <div id="tools-empty" class="ts-empty hidden">
-      <p>No external tools registered yet.</p>
+      <p>No external tools available yet.</p>
       <p class="ts-muted">Connect an MCP server or register a skill to get started.</p>
     </div>
   </section>
@@ -69,39 +69,40 @@
 <!-- ═══ Modals ═══ -->
 <div id="modal-overlay" class="ts-modal-overlay hidden"></div>
 
-<!-- Add MCP modal -->
+<!-- Connect MCP modal -->
 <div id="modal-mcp" class="ts-modal hidden">
   <div class="ts-modal-header">
-    <h3>Add MCP Server</h3>
+    <h3>Connect to MCP Server</h3>
     <button class="ts-modal-close" data-close="modal-mcp">&times;</button>
   </div>
   <form id="form-mcp" class="ts-form">
-    <label>Server ID <input name="server_id" required placeholder="e.g. github"></label>
+    <p class="ts-form-hint">Connect to an already-running MCP server. The server must be running before you connect.</p>
+    <label>Server label <input name="server_id" required placeholder="e.g. github-prod"></label>
     <label>Transport
       <select name="transport" id="mcp-transport">
-        <option value="stdio">stdio (subprocess)</option>
-        <option value="sse">sse (Server-Sent Events)</option>
+        <option value="sse">SSE (HTTP endpoint)</option>
+        <option value="stdio">stdio (local subprocess)</option>
       </select>
     </label>
-    <div id="mcp-stdio-fields">
+    <div id="mcp-sse-fields">
+      <label>Server URL <input name="url" required placeholder="http://localhost:9999/sse"></label>
+    </div>
+    <div id="mcp-stdio-fields" class="hidden">
       <label>Command <input name="command" placeholder="e.g. npx"></label>
       <label>Arguments <input name="args" placeholder="e.g. -y @mcp/server-github"></label>
+      <label>Environment (KEY=value, one per line)
+        <textarea name="env" rows="3" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+      </label>
     </div>
-    <div id="mcp-sse-fields" class="hidden">
-      <label>URL <input name="url" placeholder="http://localhost:9999/sse"></label>
-    </div>
-    <label>Environment (KEY=value, one per line)
-      <textarea name="env" rows="3" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
-    </label>
     <label>Default exposure for discovered tools
       <select name="exposure_default">
         <option value="secondary">Secondary (via tool_store)</option>
         <option value="primary">Primary (native function call)</option>
       </select>
     </label>
-    <label class="ts-checkbox"><input type="checkbox" name="auto_connect" checked> Auto-connect after adding</label>
+    <label class="ts-checkbox"><input type="checkbox" name="auto_connect" checked> Connect immediately</label>
     <div class="ts-form-actions">
-      <button type="submit" class="ts-btn ts-btn-primary">Add Server</button>
+      <button type="submit" class="ts-btn ts-btn-primary">Connect</button>
       <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
     </div>
   </form>
@@ -110,13 +111,15 @@
 <!-- Register Skill modal -->
 <div id="modal-skill" class="ts-modal hidden">
   <div class="ts-modal-header">
-    <h3>Register Skill</h3>
+    <h3>Register Existing Skill</h3>
     <button class="ts-modal-close" data-close="modal-skill">&times;</button>
   </div>
   <form id="form-skill" class="ts-form">
+    <p class="ts-form-hint">Register an already-completed skill file so your agent can use it. The skill must already exist on disk.</p>
     <label>Skill name <input name="name" required placeholder="e.g. deploy_to_prod"></label>
     <label>Description <textarea name="description" rows="2" placeholder="What this skill does…"></textarea></label>
-    <label>Code (Python) <textarea name="code" rows="8" placeholder="def run(**kwargs):&#10;    return 'done'"></textarea></label>
+    <label>File path <input name="path" required placeholder="~/.toolstore/skills/deploy_to_prod.py"></label>
+    <p class="ts-form-hint" style="margin-top:-8px;">Path to the Python file. Use <code>~</code> for home directory, or an absolute path.</p>
     <label>Exposure
       <select name="exposure">
         <option value="secondary">Secondary (via tool_store)</option>

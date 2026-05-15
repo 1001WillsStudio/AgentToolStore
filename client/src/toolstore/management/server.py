@@ -401,10 +401,27 @@ class _Handler(SimpleHTTPRequestHandler):
         if not name:
             self._json({"error": "name is required"}, 400); return
 
+        path = body.get("path", "").strip()
+        if not path:
+            self._json({"error": "path is required"}, 400); return
+
+        # Expand ~ to user home
+        skill_path = Path(path).expanduser().resolve()
+        if not skill_path.exists():
+            self._json({"error": f"File not found: {skill_path}"}, 404); return
+        if not skill_path.is_file():
+            self._json({"error": f"Not a file: {skill_path}"}, 400); return
+
+        # Read the existing skill file (validates it exists and is readable)
+        try:
+            code = skill_path.read_text()
+        except OSError as exc:
+            self._json({"error": f"Cannot read file: {exc}"}, 400); return
+
         cfg = load_config()
         entry = {
             "description": body.get("description", ""),
-            "code": body.get("code", ""),
+            "path": str(skill_path),
             "enabled": True,
             "exposure": body.get("exposure", "secondary"),
             "parallel_safe": body.get("parallel_safe", False),
@@ -421,14 +438,8 @@ class _Handler(SimpleHTTPRequestHandler):
             "description": entry["description"],
         }
 
-        code = body.get("code", "")
-        if code:
-            skill_dir = _config_dir() / "skills"
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            (skill_dir / f"{name}.py").write_text(code)
-
         save_config(cfg)
-        self._json({"success": True, "skill": name})
+        self._json({"success": True, "skill": name, "path": str(skill_path)})
 
     def _remove_skill(self, name: str):
         cfg = load_config()

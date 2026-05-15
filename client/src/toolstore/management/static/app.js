@@ -301,14 +301,14 @@ async function removeMcp(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Add MCP form
+// Connect to MCP form
 // ═══════════════════════════════════════════════════════════════════════
 
-document.getElementById('btn-add-mcp').addEventListener('click', function () {
+document.getElementById('btn-connect-mcp').addEventListener('click', function () {
   document.getElementById('form-mcp').reset();
-  document.getElementById('mcp-transport').value = 'stdio';
-  document.getElementById('mcp-stdio-fields').classList.remove('hidden');
-  document.getElementById('mcp-sse-fields').classList.add('hidden');
+  document.getElementById('mcp-transport').value = 'sse';
+  document.getElementById('mcp-stdio-fields').classList.add('hidden');
+  document.getElementById('mcp-sse-fields').classList.remove('hidden');
   openModal('modal-mcp');
 });
 
@@ -350,7 +350,7 @@ document.getElementById('form-mcp').addEventListener('submit', async function (e
         };
       });
     }
-    var msg = 'Added: ' + esc(res.server_id);
+    var msg = 'Connected: ' + esc(res.server_id);
     if (res.tools_discovered) msg += ' (' + res.tools_discovered + ' tools)';
     if (res.connection_error) msg += ' [warn: ' + res.connection_error + ']';
     toast(msg, res.connection_error ? 'error' : 'success');
@@ -422,7 +422,7 @@ async function removeSkill(name) {
   }
 }
 
-document.getElementById('btn-add-skill').addEventListener('click', function () {
+document.getElementById('btn-register-skill').addEventListener('click', function () {
   document.getElementById('form-skill').reset();
   openModal('modal-skill');
 });
@@ -433,7 +433,7 @@ document.getElementById('form-skill').addEventListener('submit', async function 
   var payload = {
     name: fd.get('name').trim(),
     description: fd.get('description').trim(),
-    code: fd.get('code').trim(),
+    path: fd.get('path').trim(),
     exposure: fd.get('exposure'),
     parallel_safe: fd.get('parallel_safe') === 'on',
     subagent_safe: fd.get('subagent_safe') === 'on',
