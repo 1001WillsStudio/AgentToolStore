@@ -219,6 +219,42 @@ class SkillDefinition:
             },
         }
 
+    def to_upload_dict(self) -> Dict[str, Any]:
+        """Serialize the skill for upload to the ToolStore server.
+
+        Includes the full SKILL.md body and all bundled files as a
+        {filename: content} dict suitable for the `POST /skills/publish`
+        endpoint.
+        """
+        files: Dict[str, str] = {}
+        for rel_path in self.list_files():
+            abs_path = (self.skill_dir / rel_path).resolve()
+            # Safety: ensure file is within skill dir
+            if not str(abs_path).startswith(str(self.skill_dir)):
+                continue
+            try:
+                content = abs_path.read_text(encoding="utf-8")
+                files[str(rel_path)] = content
+            except (UnicodeDecodeError, OSError):
+                # Binary files: read as base64
+                import base64
+                raw = abs_path.read_bytes()
+                files[str(rel_path)] = (
+                    f"[base64]{base64.b64encode(raw).decode('ascii')}"
+                )
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "version": "1.0.0",
+            "body": self.body,
+            "license": self.license,
+            "compatibility": self.compatibility,
+            "metadata": self.metadata,
+            "allowed_tools": self.allowed_tools,
+            "skill_files": files if files else None,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Skill manager

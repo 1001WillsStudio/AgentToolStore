@@ -532,6 +532,118 @@ def skill_validate(
             console.print(f"  [red]{err}[/red]")
 
 
+@skill_app.command("publish")
+def skill_publish(
+    path: str = typer.Argument(..., help="Path to skill directory (must contain SKILL.md)"),
+    registry: str = typer.Option(None, "--registry", "-r",
+                                  help="Registry URL (defaults to configured registry)"),
+):
+    """Publish a skill to the ToolStore registry.
+
+    Reads the skill directory, validates SKILL.md, bundles files, and
+    uploads everything via the `POST /skills/publish` endpoint.
+
+    Example: toolstore skill publish ./my-skill
+    """
+    import json
+    import httpx
+    from pathlib import Path
+
+    # 1. Load and validate the skill
+    skill_dir = Path(path).resolve()
+    if not skill_dir.is_dir():
+        console.print(f"[red]Error:[/red] '{path}' is not a directory")
+        raise typer.Exit(1)
+
+    sd = SkillDefinition(skill_dir)
+    if not sd.load():
+        console.print(f"[red]✗ Skill validation failed:[/red]")
+        for err in sd.errors:
+            console.print(f"  [red]• {err}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Validated: {sd.name}")
+    console.print(f"  Description: {sd.description[:100]}")
+    files_count = len(sd.list_files())
+    if files_count:
+        console.print(f"  Bundled files: {files_count}")
+
+    # 2. Serialize for upload
+    upload_data = sd.to_upload_dict()
+    console.print(
+        f"[blue]Preparing upload "
+        f"({len(upload_data.get('body', ''))} bytes body)...[/blue]"
+    )
+
+    # 3. Authenticate
+    token = config_manager.get_token()
+    if not token:
+        console.print(
+            "[yellow]Please login first using 'toolstore login'[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    # 4. Determine registry URL
+    base_url: str
+    if registry:
+        base_url = registry.rstrip("/")
+    else:
+        base_url = config_manager.get_registry_url().replace("/index.json", "")
+
+    skills_publish_url = f"{base_url}/skills/publish"
+
+    console.print(f"Publishing [cyan]{sd.name}[/cyan] to {base_url}...")
+
+    # 5. Upload
+    try:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        response = httpx.post(
+            skills_publish_url, json=upload_data, headers=headers
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            action = result.get("action", "published")
+            console.print(
+                f"[bold green]✓ Skill {action}![/bold green] "
+                f"Now available at {base_url}/skills/{sd.name}"
+            )
+        elif response.status_code == 401:
+            console.print(
+                "[red]Unauthorized. Token may have expired. "
+                "Please login again.[/red]"
+            )
+            raise typer.Exit(1)
+        elif response.status_code == 403:
+            console.print(
+                "[red]Permission denied: You do not own this skill "
+                "on the server.[/red]"
+            )
+            raise typer.Exit(1)
+        else:
+            detail = ""
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            console.print(
+                f"[red]Publish failed ({response.status_code}):[/red] {detail}"
+            )
+            raise typer.Exit(1)
+
+    except httpx.ConnectError:
+        console.print(
+            f"[red]Connection failed:[/red] Could not reach {base_url}"
+        )
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 # ------------------------------------------------------------------
 # Serve command (ToolStore as MCP server)
 # ------------------------------------------------------------------

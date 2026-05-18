@@ -16,9 +16,12 @@ class Tool(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     version: str
-    type: str  # 'api' or 'mcp'
+    type: str  # 'api', 'mcp', or 'skill'
     description: str
-    definition: dict = Field(sa_column=Column(JSON)) # Stores the full JSON schema
+    definition: dict = Field(sa_column=Column(JSON))  # Stores the full JSON schema
+    # Skill-specific fields: SKILL.md body and bundled files
+    body: Optional[str] = Field(default=None)           # Markdown instructions body
+    skill_files: Optional[dict] = Field(default=None, sa_column=Column(JSON))  # {filename: content}
     
     owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="tools")
