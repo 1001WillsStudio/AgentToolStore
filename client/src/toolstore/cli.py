@@ -522,6 +522,7 @@ def skill_validate(
 ):
     """Validate a SKILL.md file."""
     from toolstore.skill_manager import SkillDefinition
+    from pathlib import Path
     sd = SkillDefinition(Path(path))
     if sd.load():
         console.print(f"[green]✓[/green] {sd.name} is valid")
