@@ -61,13 +61,25 @@ class ConfigManager:
 
     # ----------------------------------------------------------------
     # MCP servers
-    # ----------------------------------------------------------------
 
     def get_mcp_servers(self) -> Dict[str, Any]:
         return self.config.get("mcpServers", {})
 
     def set_mcp_server(self, name: str, server_config: Dict[str, Any]) -> None:
         self.config.setdefault("mcpServers", {})[name] = server_config
+        self.save()
+
+    def add_mcp_docker_server(
+        self, name: str, image: str,
+        entrypoint: list[str] | None = None,
+    ) -> None:
+        """Convenience: register a Docker-based MCP server."""
+        cfg: Dict[str, Any] = {
+            "type": "docker",
+            "image": image,
+            "entrypoint": entrypoint or ["python", "-m", "server"],
+        }
+        self.config.setdefault("mcpServers", {})[name] = cfg
         self.save()
 
     def remove_mcp_server(self, name: str) -> None:

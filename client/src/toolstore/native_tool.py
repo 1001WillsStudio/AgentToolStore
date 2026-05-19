@@ -312,30 +312,12 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Docker execution (run executable code in an isolated container)
+# Docker execution (warm-container pool — persistent worker per image)
 # ---------------------------------------------------------------------------
 
-def _check_docker_available() -> str | None:
-    """Return ``None`` if Docker is usable, otherwise an error message."""
-    import shutil
-    if shutil.which("docker") is None:
-        return "Docker is not installed or not on PATH."
-
-    import subprocess
-    try:
-        subprocess.run(
-            ["docker", "info"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except subprocess.TimeoutExpired:
-        return "Docker daemon is unresponsive (timeout)."
-    except FileNotFoundError:
-        return "Docker CLI not found."
-    except Exception as exc:
-        return f"Cannot communicate with Docker daemon: {exc}"
-
-    return None  # OK
-
+# Helpers that live in docker_pool (imported lazily to avoid circularity).
+# _resolve_docker_image / _check_approval remain here because they depend on
+# the local *config_manager* singleton.
 
 def _resolve_docker_image(tool: Dict[str, Any]) -> tuple[str, bool]:
     """Determine the Docker image for a tool.
@@ -383,51 +365,25 @@ def _check_approval(image: str, is_custom: bool) -> str | None:
     )
 
 
-def _detect_dind() -> bool:
-    """Return True if the process is running inside a Docker container."""
-    import os
-    # Standard Docker marker file
-    if os.path.exists("/.dockerenv"):
-        return True
-    # Check cgroup for docker/rkt/kubepods
-    try:
-        with open("/proc/self/cgroup", "r") as f:
-            cgroup = f.read()
-        if "docker" in cgroup or "kubepods" in cgroup:
-            return True
-    except Exception:
-        pass
-    # Environment variable hint
-    if os.environ.get("THINKTOOL_DOCKER") == "1":
-        return True
-    return False
-
-
 def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    """Run a *docker*-type tool inside a container.
+    """Run a *docker*-type tool in a persistent warm container.
 
-    When the caller is itself inside Docker (DinD), the Docker socket is
-    expected to be available at ``/var/run/docker.sock``.  Volume mounts
-    are avoided in favour of stdin piping so that paths do not need to be
-    translated between container and host filesystem layers.
+    The container is started once (on first use of the image) and kept alive
+    across invocations so that imports and interpreter state stay warm.
+    Code is piped in/out via a newline-delimited JSON protocol.
     """
     import base64
-    import subprocess
-    import os
+    from toolstore import docker_pool
 
     # 1. Check Docker availability
-    docker_err = _check_docker_available()
+    docker_err = docker_pool.check_docker_available()
     if docker_err:
         return f"Error: {docker_err}"
 
-    # 1b. Warn if DinD is detected but docker.sock is missing
-    if _detect_dind() and not os.path.exists("/var/run/docker.sock"):
-        return (
-            "Error: Running inside Docker but /var/run/docker.sock is not mounted.\n"
-            "Add this to docker-compose.yml:\n"
-            "    volumes:\n"
-            "      - /var/run/docker.sock:/var/run/docker.sock"
-        )
+    # 1b. DinD socket check
+    socket_err = docker_pool.dind_socket_check()
+    if socket_err:
+        return socket_err
 
     # 2. Decode the code
     code = tool.get("code") or ""
@@ -446,46 +402,19 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     if approval_err:
         return f"Error: {approval_err}"
 
-    # 4. Build the entrypoint script with injected args
-    import json as _json
-    args_json = _json.dumps(args)
-    script = (
-        "# Auto-generated entrypoint for ToolStore docker-type tool\n"
+    # 4. Build the wrapper — args are injected by the worker itself
+    args_json = json.dumps(args)
+    wrapper = (
         "import json as _ts_json\n"
         f"_ts_raw_args = {args_json!r}\n"
         "toolstore_args = _ts_json.loads(_ts_raw_args)\n"
-        "TOOLSTORE_ARGS = toolstore_args  # convenience alias\n"
+        "TOOLSTORE_ARGS = toolstore_args\n"
         "del _ts_json, _ts_raw_args\n"
         + code
     )
 
-    # 5. Run via stdin piping — avoids volume-mount path problems in DinD
-    #    and command-line length limits.
+    # 5. Execute via the warm-container pool
     timeout_s = tool.get("timeout", 30)
-    cmd = [
-        "docker", "run", "--rm", "-i",
-        "--network", "none",
-        "--cpus", "1",
-        "--memory", "256m",
-        image,
-        "python",
-    ]
+    pool = docker_pool.get_pool()
+    return pool.execute(image, wrapper, args, timeout_s)
 
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=script,
-            capture_output=True, text=True,
-            timeout=timeout_s + 5,
-        )
-        out = proc.stdout
-        if proc.returncode != 0:
-            out += f"\n[exit code: {proc.returncode}]"
-        if proc.stderr:
-            out += f"\n[stderr]\n{proc.stderr}"
-        return out.strip() or "(no output)"
-
-    except subprocess.TimeoutExpired:
-        return f"Error: Docker execution timed out after {timeout_s}s."
-    except Exception as exc:
-        return f"Error during Docker execution: {exc}"

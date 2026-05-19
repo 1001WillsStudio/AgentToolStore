@@ -233,6 +233,85 @@ class SSETransport(MCPTransport):
                     threading.Event().wait(backoff)
                     backoff = min(backoff * 2, 30)
 
+# ---------------------------------------------------------------------------
+# Docker transport  (containerised MCP server)
+# ---------------------------------------------------------------------------
+
+class DockerTransport(MCPTransport):
+    """JSON-RPC over stdin/stdout of a Docker container running an MCP server.
+
+    The container is started once and kept alive across tool calls — the
+    same persistent model used by docker-type tools.  JSON-RPC messages
+    are framed as newline-delimited JSON over the container's stdio.
+    """
+
+    def __init__(self, image: str, entrypoint: list[str] = None,
+                 env: Dict[str, str] = None, timeout: float = 60.0):
+        self._image = image
+        self._entrypoint = entrypoint or ["python", "-m", "server"]
+        self._env = os.environ.copy()
+        if env:
+            self._env.update(env)
+        self._timeout = timeout
+        self._process: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+
+    # ---- lifecycle ---------------------------------------------------------
+
+    def start(self) -> None:
+        cmd = [
+            "docker", "run", "-i", "--rm",
+            "--network", "none",
+            "--cpus", "1",
+            "--memory", "256m",
+            self._image,
+        ] + self._entrypoint
+        self._process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            text=True,
+            bufsize=1,
+        )
+
+    def close(self) -> None:
+        if self._process:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=5)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._process = None
+
+    def is_connected(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    # ---- I/O ---------------------------------------------------------------
+
+    def send(self, message: Dict[str, Any]) -> None:
+        if not self._process or self._process.poll() is not None:
+            raise ConnectionError("Docker transport not connected")
+        line = json.dumps(message, ensure_ascii=False)
+        with self._lock:
+            self._process.stdin.write(line + "\n")
+            self._process.stdin.flush()
+
+    def receive(self) -> Dict[str, Any]:
+        if not self._process:
+            raise ConnectionError("Docker transport not connected")
+        while True:
+            line = self._process.stdout.readline()
+            if not line:
+                raise ConnectionError("MCP server (docker) closed connection")
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue  # skip non-JSON lines (logging, etc.)
+
 
 # ---------------------------------------------------------------------------
 # Transport factory
@@ -251,6 +330,7 @@ def create_transport(config: Dict[str, Any]) -> MCPTransport:
         {"type": "sse", "url": "http://localhost:3000",
          "headers": {"Authorization": "Bearer xxx"}}
 
+    If ``image`` is present, docker is assumed (containerised MCP server).
     If ``type`` is omitted and ``command`` is present, stdio is assumed.
     If ``type`` is omitted and ``url`` is present, sse is assumed.
     """
@@ -258,7 +338,9 @@ def create_transport(config: Dict[str, Any]) -> MCPTransport:
 
     # Auto-detect
     if not transport_type:
-        if "command" in config:
+        if "image" in config:
+            transport_type = "docker"
+        elif "command" in config:
             transport_type = "stdio"
         elif "url" in config:
             transport_type = "sse"
@@ -274,6 +356,13 @@ def create_transport(config: Dict[str, Any]) -> MCPTransport:
         return SSETransport(
             base_url=config["url"],
             headers=config.get("headers"),
+            timeout=config.get("timeout", 60.0),
+        )
+    elif transport_type == "docker":
+        return DockerTransport(
+            image=config["image"],
+            entrypoint=config.get("entrypoint", ["python", "-m", "server"]),
+            env=config.get("env"),
             timeout=config.get("timeout", 60.0),
         )
     else:
