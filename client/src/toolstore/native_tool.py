@@ -57,19 +57,22 @@ def tool_store_tool(
         action: 'search', 'info', or 'execute'
         query: Search query string (for 'search')
         tool_name: Name of tool (for 'info' or 'execute')
-        tool_names: List of tool names whose OpenAI function-calling schemas
-                    to return in bulk (for 'info'). The result is a JSON array
-                    ready to bind as agent tool definitions.
+        tool_names: List of tool names (for 'info'). With default format returns
+                    OpenAI schemas; with format='secondary' returns a compact
+                    prompt listing names, types, and descriptions.
         arguments: Dict of arguments (for 'execute')
-        format: Output format for single-tool 'info' — 'raw' (default) returns
-                the full ToolStore definition; 'openai' returns an OpenAI
-                function-calling schema.
+        format: Output format for 'info' — 'raw' (default) returns the full
+                ToolStore definition; 'openai' returns an OpenAI function-calling
+                schema; 'secondary' returns a prompt-friendly summary line.
     """
     try:
         if action == "search":
             return _do_search(query)
         elif action == "info":
-            # Bulk: return OpenAI schemas for a list of tool names
+            # Bulk: compact secondary prompt (names + types + descriptions)
+            if tool_names and format == "secondary":
+                return _do_secondary_prompt(tool_names)
+            # Bulk: OpenAI function-calling schemas
             if tool_names:
                 return _do_bulk_schema(tool_names)
             # Single tool
@@ -79,7 +82,15 @@ def tool_store_tool(
                     tool = json.loads(result)
                     return json.dumps(toolstore_to_openai(tool), indent=2)
                 except Exception:
-                    return result  # fall back to raw on conversion failure
+                    return result
+            if format == "secondary":
+                try:
+                    tool = json.loads(result)
+                    ttype = tool.get("type", "api")
+                    desc = tool.get("description", "No description")
+                    return f"- {tool['name']} ({ttype}): {desc}"
+                except Exception:
+                    return result
             return result
         elif action == "execute":
             return _do_execute(tool_name, arguments or {})
@@ -140,6 +151,29 @@ def _do_bulk_schema(tool_names: List[str]) -> str:
                 "error": f"Failed to convert '{name}': {str(exc)}"
             })
     return json.dumps(schemas, indent=2)
+
+
+def _do_secondary_prompt(tool_names: List[str]) -> str:
+    """Return a compact prompt listing tool names, types, and descriptions.
+
+    The output is plain text suitable for embedding in an agent's system
+    prompt to communicate available secondary tools without consuming the
+    context tokens that full JSON schemas would require.
+    """
+    lines = [
+        "Available secondary tools"
+        " (use tool_store with action=\"execute\" to call them):"
+    ]
+    for name in tool_names:
+        tool = index_manager.get_tool(name)
+        if not tool:
+            lines.append(f"- {name}: [NOT FOUND]")
+            continue
+        ttype = tool.get("type", "api")
+        desc = tool.get("description", "No description")
+        # Keep each entry to a single line for prompt compactness
+        lines.append(f"- {tool['name']} ({ttype}): {desc}")
+    return "\n".join(lines)
 
 
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
