@@ -15,7 +15,10 @@ from typing import Dict, Any, List
 
 from toolstore.index_manager import IndexManager
 from toolstore.config_manager import ConfigManager
-from toolstore.schema_converter import flatten_mcp_content
+from toolstore.schema_converter import (
+    flatten_mcp_content,
+    toolstore_to_openai,
+)
 from toolstore.skill_manager import get_skill_manager
 
 # ---------------------------------------------------------------------------
@@ -44,7 +47,9 @@ def tool_store_tool(
     action: str,
     query: str = None,
     tool_name: str = None,
+    tool_names: List[str] = None,
     arguments: Dict[str, Any] = None,
+    format: str = "raw",
 ) -> str:
     """Universal tool manager — search, inspect, and execute tools.
 
@@ -52,13 +57,30 @@ def tool_store_tool(
         action: 'search', 'info', or 'execute'
         query: Search query string (for 'search')
         tool_name: Name of tool (for 'info' or 'execute')
+        tool_names: List of tool names whose OpenAI function-calling schemas
+                    to return in bulk (for 'info'). The result is a JSON array
+                    ready to bind as agent tool definitions.
         arguments: Dict of arguments (for 'execute')
+        format: Output format for single-tool 'info' — 'raw' (default) returns
+                the full ToolStore definition; 'openai' returns an OpenAI
+                function-calling schema.
     """
     try:
         if action == "search":
             return _do_search(query)
         elif action == "info":
-            return _do_info(tool_name)
+            # Bulk: return OpenAI schemas for a list of tool names
+            if tool_names:
+                return _do_bulk_schema(tool_names)
+            # Single tool
+            result = _do_info(tool_name)
+            if format == "openai":
+                try:
+                    tool = json.loads(result)
+                    return json.dumps(toolstore_to_openai(tool), indent=2)
+                except Exception:
+                    return result  # fall back to raw on conversion failure
+            return result
         elif action == "execute":
             return _do_execute(tool_name, arguments or {})
         else:
@@ -96,6 +118,28 @@ def _do_info(tool_name: str) -> str:
         return f"Error: Tool '{tool_name}' not found."
 
     return json.dumps(tool, indent=2)
+
+
+def _do_bulk_schema(tool_names: List[str]) -> str:
+    """Return OpenAI function-calling schemas for a list of tool names.
+
+    The result is a JSON array of objects, each being an OpenAI
+    function-calling schema ready to bind as an agent tool definition.
+    Tools that cannot be found or converted are reported as error entries.
+    """
+    schemas: List[Dict[str, Any]] = []
+    for name in tool_names:
+        tool = index_manager.get_tool(name)
+        if not tool:
+            schemas.append({"error": f"Tool '{name}' not found"})
+            continue
+        try:
+            schemas.append(toolstore_to_openai(tool))
+        except Exception as exc:
+            schemas.append({
+                "error": f"Failed to convert '{name}': {str(exc)}"
+            })
+    return json.dumps(schemas, indent=2)
 
 
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
