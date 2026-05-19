@@ -315,10 +315,6 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 # Docker execution (run executable code in an isolated container)
 # ---------------------------------------------------------------------------
 
-# Path used inside the container for the entrypoint script.
-_CONTAINER_SCRIPT = "/toolstore_entry.py"
-
-
 def _check_docker_available() -> str | None:
     """Return ``None`` if Docker is usable, otherwise an error message."""
     import shutil
@@ -387,17 +383,51 @@ def _check_approval(image: str, is_custom: bool) -> str | None:
     )
 
 
+def _detect_dind() -> bool:
+    """Return True if the process is running inside a Docker container."""
+    import os
+    # Standard Docker marker file
+    if os.path.exists("/.dockerenv"):
+        return True
+    # Check cgroup for docker/rkt/kubepods
+    try:
+        with open("/proc/self/cgroup", "r") as f:
+            cgroup = f.read()
+        if "docker" in cgroup or "kubepods" in cgroup:
+            return True
+    except Exception:
+        pass
+    # Environment variable hint
+    if os.environ.get("THINKTOOL_DOCKER") == "1":
+        return True
+    return False
+
+
 def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    """Run a *docker*-type tool inside a container."""
+    """Run a *docker*-type tool inside a container.
+
+    When the caller is itself inside Docker (DinD), the Docker socket is
+    expected to be available at ``/var/run/docker.sock``.  Volume mounts
+    are avoided in favour of stdin piping so that paths do not need to be
+    translated between container and host filesystem layers.
+    """
     import base64
     import subprocess
-    import tempfile
-    from pathlib import Path
+    import os
 
     # 1. Check Docker availability
     docker_err = _check_docker_available()
     if docker_err:
         return f"Error: {docker_err}"
+
+    # 1b. Warn if DinD is detected but docker.sock is missing
+    if _detect_dind() and not os.path.exists("/var/run/docker.sock"):
+        return (
+            "Error: Running inside Docker but /var/run/docker.sock is not mounted.\n"
+            "Add this to docker-compose.yml:\n"
+            "    volumes:\n"
+            "      - /var/run/docker.sock:/var/run/docker.sock"
+        )
 
     # 2. Decode the code
     code = tool.get("code") or ""
@@ -416,9 +446,7 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     if approval_err:
         return f"Error: {approval_err}"
 
-    # 4. Build the entrypoint script
-    #    Serialise *args* as a JSON string injected into the script so the
-    #    user code can access it via ``TOOLSTORE_ARGS`` / ``toolstore_args``.
+    # 4. Build the entrypoint script with injected args
     import json as _json
     args_json = _json.dumps(args)
     script = (
@@ -431,31 +459,24 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         + code
     )
 
-    # 5. Write the script to a temp file
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", prefix="toolstore_", delete=False,
-        encoding="utf-8",
-    ) as tf:
-        tf.write(script)
-        host_script = tf.name
-
-    # 6. Run the container
+    # 5. Run via stdin piping — avoids volume-mount path problems in DinD
+    #    and command-line length limits.
     timeout_s = tool.get("timeout", 30)
     cmd = [
-        "docker", "run", "--rm",
+        "docker", "run", "--rm", "-i",
         "--network", "none",
         "--cpus", "1",
         "--memory", "256m",
-        "-v", f"{host_script}:{_CONTAINER_SCRIPT}:ro",
         image,
-        "python", _CONTAINER_SCRIPT,
+        "python",
     ]
 
     try:
         proc = subprocess.run(
             cmd,
+            input=script,
             capture_output=True, text=True,
-            timeout=timeout_s + 5,  # slight extra for docker overhead
+            timeout=timeout_s + 5,
         )
         out = proc.stdout
         if proc.returncode != 0:
@@ -468,9 +489,3 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         return f"Error: Docker execution timed out after {timeout_s}s."
     except Exception as exc:
         return f"Error during Docker execution: {exc}"
-    finally:
-        # Clean up temp file
-        try:
-            Path(host_script).unlink(missing_ok=True)
-        except Exception:
-            pass
