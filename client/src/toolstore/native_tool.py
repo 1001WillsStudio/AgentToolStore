@@ -88,6 +88,8 @@ def tool_store_tool(
                     tool = json.loads(result)
                     ttype = tool.get("type", "api")
                     desc = tool.get("description", "No description")
+                    if len(desc) > 100:
+                        desc = desc[:100].rstrip() + "..."
                     return f"- {tool['name']} ({ttype}): {desc}"
                 except Exception:
                     return result
@@ -153,17 +155,22 @@ def _do_bulk_schema(tool_names: List[str]) -> str:
     return json.dumps(schemas, indent=2)
 
 
-def _do_secondary_prompt(tool_names: List[str]) -> str:
+def _do_secondary_prompt(tool_names: List[str],
+                         max_desc_len: int = 100) -> str:
     """Return a compact prompt listing tool names, types, and descriptions.
 
     The output is plain text suitable for embedding in an agent's system
     prompt to communicate available secondary tools without consuming the
     context tokens that full JSON schemas would require.
+
+    Descriptions longer than *max_desc_len* are truncated with an ellipsis
+    to keep the prompt footprint small.
     """
-    lines = [
+    header = (
         "Available secondary tools"
         " (use tool_store with action=\"execute\" to call them):"
-    ]
+    )
+    lines = [header]
     for name in tool_names:
         tool = index_manager.get_tool(name)
         if not tool:
@@ -171,7 +178,8 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
             continue
         ttype = tool.get("type", "api")
         desc = tool.get("description", "No description")
-        # Keep each entry to a single line for prompt compactness
+        if len(desc) > max_desc_len:
+            desc = desc[:max_desc_len].rstrip() + "..."
         lines.append(f"- {tool['name']} ({ttype}): {desc}")
     return "\n".join(lines)
 
