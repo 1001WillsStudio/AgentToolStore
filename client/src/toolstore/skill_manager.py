@@ -182,8 +182,13 @@ class SkillDefinition:
         return sorted(files)
 
     def to_tool_definition(self) -> Dict[str, Any]:
-        """Convert to a ToolStore-compatible tool definition (type: skill)."""
-        return {
+        """Convert to a ToolStore-compatible tool definition (type: skill).
+
+        Includes the full SKILL.md body for progressive disclosure and
+        the list of bundled files for discovery — both available in the
+        in-memory index without needing to re-read from disk.
+        """
+        definition = {
             "name": self.name,
             "type": "skill",
             "description": self.description,
@@ -218,6 +223,17 @@ class SkillDefinition:
                 },
             },
         }
+
+        # Include body for progressive disclosure at load time
+        if self.body:
+            definition["body"] = self.body
+
+        # Include bundled file list for discovery
+        files = self.list_files()
+        if files:
+            definition["skill_files_list"] = files
+
+        return definition
 
     def to_upload_dict(self) -> Dict[str, Any]:
         """Serialize the skill for upload to the ToolStore server.
