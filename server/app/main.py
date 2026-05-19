@@ -86,6 +86,14 @@ def get_index(session: Session = Depends(get_session)):
         tool_data["description"] = tool.description
         tool_data["type"] = tool.type
         tool_data["owner"] = tool.owner.username if tool.owner else "unknown"
+        # Include docker fields for docker-type tools
+        if tool.type == "docker":
+            if tool.docker_image:
+                tool_data["docker_image"] = tool.docker_image
+            if tool.code:
+                tool_data["code"] = tool.code
+            if tool.code_base64:
+                tool_data["code_base64"] = tool.code_base64
         # Include body for skills (progressive disclosure)
         if tool.type == "skill" and tool.body:
             tool_data["body"] = tool.body
@@ -105,14 +113,16 @@ def publish_tool(
     Authenticated endpoint to publish a tool (api, mcp, or skill).
     For skills, include 'body' (SKILL.md body text) and optional
     'skill_files' ({filename: content} dict).
+    For docker, include 'docker_image' (optional custom image), 'code'
+    (the executable Python code), and optional 'code_base64'.
     """
     name = tool_def.get("name")
     if not name:
         raise HTTPException(status_code=400, detail="Tool name required")
 
     tool_type = tool_def.get("type", "api")
-    if tool_type not in ("api", "mcp", "skill"):
-        raise HTTPException(status_code=400, detail=f"Invalid type: {tool_type}. Must be 'api', 'mcp', or 'skill'")
+    if tool_type not in ("api", "mcp", "skill", "docker"):
+        raise HTTPException(status_code=400, detail=f"Invalid type: {tool_type}. Must be 'api', 'mcp', 'skill', or 'docker'")
         
     # Check if exists
     existing = session.exec(select(Tool).where(Tool.name == name)).first()
@@ -131,6 +141,11 @@ def publish_tool(
         if tool_type == "skill":
             existing.body = tool_def.get("body")
             existing.skill_files = tool_def.get("skill_files")
+        # Handle docker-specific fields
+        if tool_type == "docker":
+            existing.docker_image = tool_def.get("docker_image")
+            existing.code = tool_def.get("code")
+            existing.code_base64 = tool_def.get("code_base64")
         session.add(existing)
         session.commit()
         return {"success": True, "tool": name, "action": "updated"}
@@ -144,6 +159,9 @@ def publish_tool(
         definition=tool_def,
         body=tool_def.get("body") if tool_type == "skill" else None,
         skill_files=tool_def.get("skill_files") if tool_type == "skill" else None,
+        docker_image=tool_def.get("docker_image") if tool_type == "docker" else None,
+        code=tool_def.get("code") if tool_type == "docker" else None,
+        code_base64=tool_def.get("code_base64") if tool_type == "docker" else None,
         owner_id=current_user.id
     )
     

@@ -200,9 +200,10 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
         return _execute_mcp(tool, args)
     elif tool_type == "skill":
         return _execute_skill(tool, args)
+    elif tool_type == "docker":
+        return _execute_docker(tool, args)
     else:
         return f"Error: Unknown tool type '{tool_type}'"
-
 
 # ---------------------------------------------------------------------------
 # API execution
@@ -308,3 +309,168 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 
     else:
         return f"Error: Unknown skill action '{skill_action}'. Use 'load', 'files', or 'file'."
+
+
+# ---------------------------------------------------------------------------
+# Docker execution (run executable code in an isolated container)
+# ---------------------------------------------------------------------------
+
+# Path used inside the container for the entrypoint script.
+_CONTAINER_SCRIPT = "/toolstore_entry.py"
+
+
+def _check_docker_available() -> str | None:
+    """Return ``None`` if Docker is usable, otherwise an error message."""
+    import shutil
+    if shutil.which("docker") is None:
+        return "Docker is not installed or not on PATH."
+
+    import subprocess
+    try:
+        subprocess.run(
+            ["docker", "info"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return "Docker daemon is unresponsive (timeout)."
+    except FileNotFoundError:
+        return "Docker CLI not found."
+    except Exception as exc:
+        return f"Cannot communicate with Docker daemon: {exc}"
+
+    return None  # OK
+
+
+def _resolve_docker_image(tool: Dict[str, Any]) -> tuple[str, bool]:
+    """Determine the Docker image for a tool.
+
+    Returns:
+        ``(image, is_custom)`` — *is_custom* is ``True`` when the tool
+        specifies its own ``docker_image`` (rather than falling back to
+        the user-configured default).
+    """
+    custom = tool.get("docker_image")
+    if custom:
+        return custom, True
+    return config_manager.get_default_docker_image(), False
+
+
+def _check_approval(image: str, is_custom: bool) -> str | None:
+    """Validate *image* against the user's Docker-approval policy.
+
+    Returns ``None`` if the image is allowed, or an error message otherwise.
+    """
+    # The default image is always allowed (no custom Docker).
+    if not is_custom:
+        return None
+
+    mode = config_manager.get_docker_approval_mode()
+    if mode == "all":
+        return None  # everything is allowed
+
+    if mode == "none":
+        return (
+            f"Docker image '{image}' is not allowed. "
+            f"Custom Docker images are blocked by your approval mode (currently 'none'). "
+            f"Use 'toolstore docker mode list' or 'toolstore docker mode all' to relax this."
+        )
+
+    # mode == "list"
+    approved = config_manager.get_approved_docker_images()
+    if image in approved:
+        return None
+
+    return (
+        f"Docker image '{image}' is not in your approved list. "
+        f"Use 'toolstore docker approve {image}' to add it, "
+        f"or 'toolstore docker mode all' to allow any image."
+    )
+
+
+def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
+    """Run a *docker*-type tool inside a container."""
+    import base64
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    # 1. Check Docker availability
+    docker_err = _check_docker_available()
+    if docker_err:
+        return f"Error: {docker_err}"
+
+    # 2. Decode the code
+    code = tool.get("code") or ""
+    if tool.get("code_base64"):
+        try:
+            code = base64.b64decode(tool["code_base64"]).decode("utf-8")
+        except Exception as exc:
+            return f"Error: Failed to decode base64 code: {exc}"
+
+    if not code.strip():
+        return "Error: Docker tool has no code to execute."
+
+    # 3. Resolve the image and check approval
+    image, is_custom = _resolve_docker_image(tool)
+    approval_err = _check_approval(image, is_custom)
+    if approval_err:
+        return f"Error: {approval_err}"
+
+    # 4. Build the entrypoint script
+    #    Serialise *args* as a JSON string injected into the script so the
+    #    user code can access it via ``TOOLSTORE_ARGS`` / ``toolstore_args``.
+    import json as _json
+    args_json = _json.dumps(args)
+    script = (
+        "# Auto-generated entrypoint for ToolStore docker-type tool\n"
+        "import json as _ts_json\n"
+        f"_ts_raw_args = {args_json!r}\n"
+        "toolstore_args = _ts_json.loads(_ts_raw_args)\n"
+        "TOOLSTORE_ARGS = toolstore_args  # convenience alias\n"
+        "del _ts_json, _ts_raw_args\n"
+        + code
+    )
+
+    # 5. Write the script to a temp file
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", prefix="toolstore_", delete=False,
+        encoding="utf-8",
+    ) as tf:
+        tf.write(script)
+        host_script = tf.name
+
+    # 6. Run the container
+    timeout_s = tool.get("timeout", 30)
+    cmd = [
+        "docker", "run", "--rm",
+        "--network", "none",
+        "--cpus", "1",
+        "--memory", "256m",
+        "-v", f"{host_script}:{_CONTAINER_SCRIPT}:ro",
+        image,
+        "python", _CONTAINER_SCRIPT,
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True, text=True,
+            timeout=timeout_s + 5,  # slight extra for docker overhead
+        )
+        out = proc.stdout
+        if proc.returncode != 0:
+            out += f"\n[exit code: {proc.returncode}]"
+        if proc.stderr:
+            out += f"\n[stderr]\n{proc.stderr}"
+        return out.strip() or "(no output)"
+
+    except subprocess.TimeoutExpired:
+        return f"Error: Docker execution timed out after {timeout_s}s."
+    except Exception as exc:
+        return f"Error during Docker execution: {exc}"
+    finally:
+        # Clean up temp file
+        try:
+            Path(host_script).unlink(missing_ok=True)
+        except Exception:
+            pass
