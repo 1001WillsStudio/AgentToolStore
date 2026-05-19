@@ -311,66 +311,18 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         return f"Error: Unknown skill action '{skill_action}'. Use 'load', 'files', or 'file'."
 
 
+
+
 # ---------------------------------------------------------------------------
-# Docker execution (warm-container pool — persistent worker per image)
+# Docker execution  (single shared warm worker — same container for all tools)
 # ---------------------------------------------------------------------------
-
-# Helpers that live in docker_pool (imported lazily to avoid circularity).
-# _resolve_docker_image / _check_approval remain here because they depend on
-# the local *config_manager* singleton.
-
-def _resolve_docker_image(tool: Dict[str, Any]) -> tuple[str, bool]:
-    """Determine the Docker image for a tool.
-
-    Returns:
-        ``(image, is_custom)`` — *is_custom* is ``True`` when the tool
-        specifies its own ``docker_image`` (rather than falling back to
-        the user-configured default).
-    """
-    custom = tool.get("docker_image")
-    if custom:
-        return custom, True
-    return config_manager.get_default_docker_image(), False
-
-
-def _check_approval(image: str, is_custom: bool) -> str | None:
-    """Validate *image* against the user's Docker-approval policy.
-
-    Returns ``None`` if the image is allowed, or an error message otherwise.
-    """
-    # The default image is always allowed (no custom Docker).
-    if not is_custom:
-        return None
-
-    mode = config_manager.get_docker_approval_mode()
-    if mode == "all":
-        return None  # everything is allowed
-
-    if mode == "none":
-        return (
-            f"Docker image '{image}' is not allowed. "
-            f"Custom Docker images are blocked by your approval mode (currently 'none'). "
-            f"Use 'toolstore docker mode list' or 'toolstore docker mode all' to relax this."
-        )
-
-    # mode == "list"
-    approved = config_manager.get_approved_docker_images()
-    if image in approved:
-        return None
-
-    return (
-        f"Docker image '{image}' is not in your approved list. "
-        f"Use 'toolstore docker approve {image}' to add it, "
-        f"or 'toolstore docker mode all' to allow any image."
-    )
-
 
 def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    """Run a *docker*-type tool in a persistent warm container.
+    """Run a *docker*-type tool in the single shared warm worker.
 
-    The container is started once (on first use of the image) and kept alive
-    across invocations so that imports and interpreter state stay warm.
-    Code is piped in/out via a newline-delimited JSON protocol.
+    The worker container starts lazily on first use and stays alive forever.
+    ALL docker-type tools share the same container.  Code is piped in via
+    stdin and results are read from stdout using newline-delimited JSON.
     """
     import base64
     from toolstore import docker_pool
@@ -396,13 +348,7 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     if not code.strip():
         return "Error: Docker tool has no code to execute."
 
-    # 3. Resolve the image and check approval
-    image, is_custom = _resolve_docker_image(tool)
-    approval_err = _check_approval(image, is_custom)
-    if approval_err:
-        return f"Error: {approval_err}"
-
-    # 4. Build the wrapper — args are injected by the worker itself
+    # 3. Build wrapper — args injected by worker
     args_json = json.dumps(args)
     wrapper = (
         "import json as _ts_json\n"
@@ -413,8 +359,8 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         + code
     )
 
-    # 5. Execute via the warm-container pool
+    # 4. Execute in the single shared worker
     timeout_s = tool.get("timeout", 30)
-    pool = docker_pool.get_pool()
-    return pool.execute(image, wrapper, args, timeout_s)
+    worker = docker_pool.get_worker()
+    return worker.execute(wrapper, args, timeout_s)
 

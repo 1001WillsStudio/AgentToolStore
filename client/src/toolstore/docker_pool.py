@@ -1,14 +1,14 @@
 """
-Warm Docker container pool for ToolStore.
+Docker container management for ToolStore.
 
-Two modes share the same container-lifecycle machinery:
+Two separate container models:
 
-1.  **Worker containers** — persistent Python workers for docker-type tools.
-    One container per image.  Code is piped in/out per invocation.
-    Protocol: newline-delimited JSON  {id, code, args} → {id, ok, output}.
+1.  **Single shared worker** — one persistent Python worker for ALL docker-type
+    tools.  The container starts once and stays alive forever.  Code is piped
+    in/out per invocation via newline-delimited JSON.
 
-2.  **MCP-server containers** — persistent containers running an MCP server.
-    One container per server.  JSON-RPC travels over stdin/stdout.
+2.  **MCP-server containers** — one container per MCP server (started by
+    ``DockerTransport`` in ``transport.py``).  JSON-RPC over stdin/stdout.
 """
 
 from __future__ import annotations
@@ -116,17 +116,17 @@ def dind_socket_check() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# WarmContainer — one persistent worker per image
+# WarmContainer — the single shared Python worker for all docker-type tools
 # ---------------------------------------------------------------------------
 
 
 class WarmContainer:
-    """A persistent Docker container running the Python worker.
+    """The single persistent Docker container that runs ALL docker-type tools.
 
-    The container is started once and kept alive between tool invocations.
-    Calls are serialised through a lock so the single-threaded worker
-    inside the container never sees overlapping requests.
-    """
+    Started once (lazily, on first use) and kept alive forever.  Every
+    docker-type tool invocation pipes code in via stdin and reads the
+    result from stdout.  Calls are serialised through a lock so the
+    single-threaded worker never sees overlapping requests.
 
     def __init__(self, image: str, container_name: str) -> None:
         self.image = image
@@ -243,66 +243,43 @@ class WarmContainer:
 
 
 # ---------------------------------------------------------------------------
-# WarmContainerPool — global singleton keyed by image
+# Module-level singleton — the one shared worker
 # ---------------------------------------------------------------------------
 
-class WarmContainerPool:
-    """A pool of warm containers, keyed by Docker image.
+_worker: Optional[WarmContainer] = None
+_worker_lock = threading.Lock()
 
-    Usage::
 
-        pool = WarmContainerPool()
-        result = pool.execute(image, code, args, timeout=30)
-        pool.shutdown_all()
+def get_worker() -> WarmContainer:
+    """Return (or lazily start) the single shared worker container.
+
+    The image comes from the user's config (``default_docker_image``).
     """
+    global _worker
+    if _worker is not None and _worker.is_alive():
+        return _worker
 
-    def __init__(self) -> None:
-        self._containers: Dict[str, WarmContainer] = {}
-        self._lock = threading.Lock()
+    with _worker_lock:
+        # Double-check inside the lock
+        if _worker is not None and _worker.is_alive():
+            return _worker
 
-    def get(self, image: str) -> WarmContainer:
-        """Return (or create) a warm container for *image*."""
-        with self._lock:
-            c = self._containers.get(image)
-            if c is not None and c.is_alive():
-                return c
-            if c is not None:
-                c.stop()
-            name = f"ts_wrk_{abs(hash(image)) & 0xFFFF:04x}_{id(self) & 0xFF:02x}"
-            c = WarmContainer(image, name)
-            c.start()
-            self._containers[image] = c
-            return c
+        # Import here to avoid circularity at module level
+        from toolstore.config_manager import ConfigManager
+        cfg = ConfigManager()
+        cfg.load()
+        image = cfg.get_default_docker_image()
 
-    def execute(
-        self, image: str, code: str, args: Dict[str, Any], timeout_s: int = 30
-    ) -> str:
-        """Shortcut: get a container and execute code in one call."""
-        return self.get(image).execute(code, args, timeout_s)
-
-    def shutdown_all(self) -> None:
-        with self._lock:
-            for c in self._containers.values():
-                c.stop()
-            self._containers.clear()
-
-    def shutdown_image(self, image: str) -> None:
-        with self._lock:
-            c = self._containers.pop(image, None)
-            if c:
-                c.stop()
+        name = f"ts_worker"
+        _worker = WarmContainer(image, name)
+        _worker.start()
+        return _worker
 
 
-# Module-level singleton (lazily initialised by native_tool / mcp_client).
-
-_pool: Optional[WarmContainerPool] = None
-_pool_lock = threading.Lock()
-
-
-def get_pool() -> WarmContainerPool:
-    global _pool
-    if _pool is None:
-        with _pool_lock:
-            if _pool is None:
-                _pool = WarmContainerPool()
-    return _pool
+def shutdown_worker() -> None:
+    """Stop the shared worker (e.g. at process exit)."""
+    global _worker
+    with _worker_lock:
+        if _worker:
+            _worker.stop()
+            _worker = None
