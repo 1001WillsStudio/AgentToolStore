@@ -29,7 +29,7 @@ class ConfigManager:
             "docker": {
                 "approval_mode": "none",  # "none" | "list" | "all"
                 "approved_images": [],
-                "default_image": "python:3.11-slim",
+                "default_image": "quay.io/jupyter/scipy-notebook",
             },
         }
 
