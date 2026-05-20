@@ -1,131 +1,160 @@
 # AgentToolStore
 
-**The universal tool platform for AI agents** — MCP Client + Skills Manager + Registry Server.
+**The universal tool platform for AI agents.**
 
-AgentToolStore gives AI agents a single, unified interface to discover, inspect, and execute
-tools from multiple sources: public APIs, MCP servers, and agent skills. It bridges the gap
-between different tool ecosystems by providing bidirectional schema conversion (ToolStore ↔
-OpenAI function-calling ↔ MCP JSON Schema) so tools work across any agent framework.
+Register any tool — an HTTP endpoint, an MCP server, a SKILL.md file, or raw Python
+code — and every agent in your ecosystem can discover, inspect, and run it through a
+single unified interface.  AgentToolStore bridges the gaps between tool ecosystems,
+converting schemas on the fly so tools work across OpenAI, Anthropic, MCP, and any
+other agent framework.
+
+<p align="center">
+  <strong>
+    <a href="#quick-start">Quick Start</a> ·
+    <a href="#tool-types">Tool Types</a> ·
+    <a href="#docker-sandbox">Docker Sandbox</a> ·
+    <a href="#mcp-support">MCP Support</a> ·
+    <a href="#configuration">Configuration</a>
+  </strong>
+</p>
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    Agent                         │
-│         (ThinkWithTool / Claude / etc.)          │
-│                                                  │
-│  ┌───────────────────────────────────────────┐  │
-│  │         tool_store meta-tool               │  │
-│  │  action: search | info | execute           │  │
-│  └──────────────┬────────────────────────────┘  │
-└─────────────────┼────────────────────────────────┘
-                  │
-     ┌────────────┼────────────┐
-     ▼            ▼            ▼
-  Public      MCP Client    Skills
-  APIs        (stdio/SSE)   (SKILL.md)
-     │            │            │
-     └────────────┼────────────┘
-                  ▼
-          Registry Server
-        (FastAPI + SQLite)
-```
-
-## Key Concepts
-
-### Tools
-A *tool* is any callable function exposed to an agent. ToolStore supports three kinds:
-
-| Type     | Description | Example |
-|----------|-------------|---------|
-| **api**  | HTTP endpoint called via GET/POST | weather-api, currency-converter |
-| **mcp**  | Tool exposed by an MCP server over stdio or HTTP/SSE | github_create_issue, filesystem_read |
-| **skill**| Agent skill following the agentskills.io `SKILL.md` spec | pdf-processing, image-analysis |
-
-### MCP (Model Context Protocol)
-ToolStore is a full MCP client supporting the complete protocol — tools, resources, and
-prompts — over both stdio and HTTP/SSE transports. It maintains a persistent connection
-pool so multiple MCP servers can be used simultaneously without restarting.
-
-### Schema Bridge
-Tool definitions circulate in three formats. ToolStore converts between all of them:
-
-- **ToolStore format** — internal canonical representation (with `schema.input` or `schema.inputSchema`)
-- **OpenAI function-calling** — `{type: "function", function: {name, description, parameters}}`
-- **MCP JSON Schema** — `{name, description, inputSchema: {type: "object", properties: {...}}}`
-
-This means a tool registered once can be used with any LLM provider or agent framework.
-
-### Registry Server
-A FastAPI server that acts as a central index for tools. Clients pull the index to
-discover available tools, and tool authors can publish their definitions. Supports
-JWT authentication.
-
----
-
-## Repository Structure
-
-```
-AgentToolStore/
-├── client/              # CLI & Python library
-│   └── src/toolstore/
-│       ├── native_tool.py      # Entry point for agents (tool_store_tool)
-│       ├── schema_converter.py # Bidirectional schema conversion
-│       ├── mcp_client.py       # Full MCP protocol client
-│       ├── mcp_server.py       # Expose tools as MCP server
-│       ├── skill_manager.py    # SKILL.md parser & executor
-│       ├── index_manager.py    # Tool index search & lookup
-│       ├── config_manager.py   # ~/.toolstore/config.json
-│       ├── transport.py        # stdio + SSE transport layer
-│       └── cli.py              # Command-line interface
-├── server/              # Registry server (FastAPI)
-│   └── app/
-│       ├── main.py             # Server entry point
-│       ├── models.py           # SQLAlchemy models
-│       └── api/v1/             # REST endpoints
-├── plan/                # Specifications & roadmap
-│   └── V1_SPEC.md
-└── docs/                # Integration design documents
+                        ┌──────────────────────┐
+                        │    Any AI Agent       │
+                        │  (Claude, GPT, etc.)  │
+                        └──────────┬───────────┘
+                                   │
+                    tool_store_tool(action, ...)
+                                   │
+        ┌──────────────────────────┼──────────────────────────┐
+        │                          │                          │
+        ▼                          ▼                          ▼
+ ┌─────────────┐          ┌───────────────┐          ┌──────────────┐
+ │  API tools  │          │  Docker tools │          │  MCP tools   │
+ │  HTTP GET   │          │  warm worker  │          │  JSON-RPC    │
+ │  / POST     │          │  (persistent) │          │  over stdio  │
+ └─────────────┘          └───────┬───────┘          └──────┬───────┘
+                                  │                         │
+                                  │  ┌──────────────────────┤
+                                  │  │   MCP-in-Docker      │
+                                  │  │   (1 container per   │
+                                  │  │    MCP server)       │
+                                  │  └──────────────────────┤
+                                  ▼                         ▼
+                         ┌────────────────────────────────────┐
+                         │         Docker Engine               │
+                         │    (host daemon or DinD socket)     │
+                         └────────────────────────────────────┘
+                                   │
+                          Registry Server
+                        (FastAPI + SQLite)
 ```
 
 ---
 
-## Quick Start
+## Tool Types
 
-### Client
+AgentToolStore supports four kinds of tools.  Every tool type is discovered, inspected,
+and executed through the exact same interface — the agent doesn't need to know or care
+which kind it's calling.
 
-```bash
-cd client
-pip install -e ".[all]"
+| Type       | What it is | Example |
+|------------|------------|---------|
+| **api**    | HTTP endpoint, called via GET or POST | `weather-api`, `currency-converter` |
+| **mcp**    | Tool exposed by an MCP server over stdio or SSE | `github_create_issue`, `filesystem_read` |
+| **skill**  | Agent skill following the [agentskills.io](https://agentskills.io) `SKILL.md` spec | `pdf-processing`, `image-analysis` |
+| **docker** | Raw Python code executed in an isolated container | `create_user`, `run_sql_query`, `train_model` |
 
-# Pull the latest tool index from the registry
-toolstore update
+### Docker tools: how they work
 
-# Search for tools
-toolstore search "weather"
+Docker tools run Python code in a persistent warm container.  The container starts
+**once** and stays alive across all invocations — imports and interpreter state are
+cached, so repeated calls feel instantaneous.
 
-# Inspect a tool's schema
-toolstore info weather-api
+<p align="center">
+  <strong>load once → call by name</strong>
+</p>
 
-# Execute a tool
-toolstore execute weather-api --latitude 37.77 --longitude -122.41
+```
+┌─ First call to create_user ─────────────────────────────────────────────┐
+│                                                                          │
+│  LOAD  {"module":"m_a3f8b2c1", "code":"def create_user(name,email):..."}│
+│     ←  {"ok":true, "output":"module 'm_a3f8b2c1' loaded"}              │
+│                                                                          │
+│  CALL  {"module":"m_a3f8b2c1", "function":"create_user",                │
+│         "args":{"name":"Alice","email":"alice@e.com"}}                   │
+│     ←  {"ok":true, "output":"Created Alice"}                            │
+│                                                                          │
+├─ Second call to delete_user (same module, already loaded) ──────────────┤
+│                                                                          │
+│  CALL  {"module":"m_a3f8b2c1", "function":"delete_user",                │
+│         "args":{"id":42}}                                               │
+│     ←  {"ok":true, "output":"Deleted 42"}                               │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Registry Server
+The default worker image is [`quay.io/jupyter/scipy-notebook`][scipy-notebook] — a
+BSD-3-Clause licensed image with **numpy, scipy, pandas, matplotlib, scikit-learn,
+seaborn, beautifulsoup4, sqlalchemy, dask, cython, numba, sympy, openpyxl, h5py**, and
+20+ more scientific Python libraries pre-installed.  Most docker tools need nothing
+beyond standard-library imports to be useful; when they do need heavier dependencies,
+they're already there.
+
+[scipy-notebook]: https://github.com/jupyter/docker-stacks
+
+### Docker approval model
+
+Custom Docker images are controlled by a client-side approval policy — the registry
+never sees your credentials or image preferences:
+
+| Mode     | Behaviour |
+|----------|-----------|
+| `none`   | Only the default base image is allowed.  No custom images. |
+| `list`   | Only images that appear in your approved list are allowed. |
+| `all`    | Any Docker image is allowed. |
 
 ```bash
-cd server
-pip install -r requirements.txt
-python init_db.py
-uvicorn app.main:app --reload
+toolstore docker mode list
+toolstore docker approve ghcr.io/my-org/tool-image:v1
+toolstore docker list
 ```
 
-### Run as MCP Server
+This is designed for environments where you want the convenience of community tools
+but need to control what code runs on your infrastructure.
 
-ToolStore can expose all its indexed tools as an MCP server, making them available to
-Claude Desktop, VS Code, and other MCP-compatible clients:
+---
+
+## MCP Support
+
+AgentToolStore is a full MCP participant — both client and server.
+
+### MCP Client
+
+Speaks the complete MCP protocol (tools, resources, prompts) over **stdio** and
+**HTTP/SSE** transports.  A persistent connection pool keeps multiple MCP servers
+alive simultaneously.
+
+```bash
+toolstore mcp-server add github npx -a "-y @modelcontextprotocol/server-github"
+toolstore mcp-server add weather ghcr.io/acme/weather-mcp:v1 --entrypoint "python -m weather_mcp"
+toolstore update          # discover tools from all registered servers
+toolstore list            # see everything available
+```
+
+### MCP-in-Docker
+
+MCP servers can run inside Docker containers — each server gets its own persistent
+container with its own image.  This gives you full isolation for servers with heavy
+or conflicting dependencies without polluting the host.
+
+### MCP Server
+
+AgentToolStore itself can act as an MCP server, exposing every indexed tool to
+Claude Desktop, VS Code, or any other MCP-compatible client:
 
 ```bash
 # stdio mode (for Claude Desktop)
@@ -137,38 +166,120 @@ toolstore serve --mode sse --port 9090
 
 ---
 
-## Using ToolStore from an Agent
+## Quick Start
 
-The core entry point is `tool_store_tool()` in `native_tool.py`. Agents call it with
-an action and parameters:
+### Install the CLI
+
+```bash
+pip install -e client/
+```
+
+### Pull the tool index
+
+```bash
+# From the default registry
+toolstore update
+
+# Search across all tool types
+toolstore search "weather"
+
+# Inspect a tool's schema (works for api, mcp, skill, and docker tools)
+toolstore info weather-api
+```
+
+### Configure Docker for sandboxed execution
+
+Running inside Docker yourself?  Mount the socket:
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+The client auto-detects Docker-in-Docker and will tell you if the socket is missing.
+
+### Run a docker tool
+
+```bash
+toolstore use create_user --name "Alice" --email "alice@example.com"
+```
+
+### Publish your own tool
+
+```json
+// my-tool.json
+{
+  "name": "create_user",
+  "type": "docker",
+  "description": "Create a new user account",
+  "code": "def create_user(name, email):\n    return f'Created {name} ({email})'",
+  "function": "create_user",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name":  {"type": "string"},
+      "email": {"type": "string"}
+    },
+    "required": ["name", "email"]
+  }
+}
+```
+
+```bash
+toolstore publish my-tool.json
+```
+
+### Run the registry server
+
+```bash
+cd server
+pip install -r requirements.txt
+python init_db.py
+uvicorn app.main:app --reload
+```
+
+---
+
+## Using from an Agent
 
 ```python
 from toolstore.native_tool import tool_store_tool
 
-# Search
-tool_store_tool(action="search", query="file system")
+# Search for tools
+tool_store_tool(action="search", query="weather")
 
-# Inspect
-tool_store_tool(action="info", tool_name="filesystem_read")
-
-# Get OpenAI schemas in bulk (ready to bind as agent tool definitions)
+# Get OpenAI schemas — drop directly into your agent's function definitions
 tool_store_tool(action="info",
-                tool_names=["github_create_issue", "weather-api"])
+                tool_names=["create_user", "weather-api", "github_create_issue"])
 
-# Execute
+# Execute any tool type through the same interface
 tool_store_tool(action="execute",
-                tool_name="weather-api",
-                arguments={"latitude": 37.77, "longitude": -122.41})
+                tool_name="create_user",
+                arguments={"name": "Alice", "email": "alice@e.com"})
 ```
 
-The `tool_names` parameter returns a JSON array of OpenAI function-calling schemas —
-drop them directly into your agent's function definitions list.
+---
+
+## Schema Bridge
+
+Tool definitions are automatically converted between three formats:
+
+| Format | Used by |
+|--------|---------|
+| **ToolStore** (canonical) | Internal representation |
+| **OpenAI function-calling** | GPT, compatible APIs |
+| **MCP JSON Schema** | Claude Desktop, MCP clients |
+
+A tool registered once works everywhere.  No format lock-in.
 
 ---
 
 ## Configuration
 
-All client configuration lives in `~/.toolstore/config.json`:
+All settings live in `~/.toolstore/config.json`:
 
 ```json
 {
@@ -177,9 +288,19 @@ All client configuration lives in `~/.toolstore/config.json`:
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"]
+    },
+    "weather": {
+      "type": "docker",
+      "image": "ghcr.io/acme/weather-mcp:v1",
+      "entrypoint": ["python", "-m", "weather_mcp_server"]
     }
   },
   "skill_dirs": ["~/.toolstore/skills"],
+  "docker": {
+    "approval_mode": "list",
+    "approved_images": ["ghcr.io/acme/weather-mcp:v1"],
+    "default_image": "quay.io/jupyter/scipy-notebook"
+  },
   "server": {
     "enabled": false,
     "mode": "stdio",
@@ -189,25 +310,43 @@ All client configuration lives in `~/.toolstore/config.json`:
 }
 ```
 
-Manage it via the CLI:
+Everything is manageable through the CLI:
 
 ```bash
-toolstore config get                    # View current config
-toolstore config add-mcp github ...     # Register an MCP server
-toolstore skill add-dir ~/my-skills     # Add a skill directory
+toolstore config get
+toolstore docker mode list
+toolstore docker approve ghcr.io/my-org/image:v1
+toolstore mcp-server add-docker weather ghcr.io/acme/weather-mcp:v1
+toolstore skill add-dir ~/my-skills
 ```
 
 ---
 
-## Key Features
+## Repository Structure
 
--   **MCP Client** — full protocol (tools, resources, prompts), stdio + HTTP/SSE,
-    persistent connection pool
--   **Skills** — agentskills.io spec: `SKILL.md` parsing, progressive disclosure,
-    local script execution, validation
--   **MCP Server** — expose all indexed tools as MCP endpoints for any
-    MCP-compatible client
--   **Schema Bridge** — bidirectional ToolStore ↔ OpenAI ↔ MCP schema conversion
--   **Registry Server** — FastAPI with JWT auth, tool publishing, index distribution
--   **Three tool types** — APIs (HTTP), MCP (protocol), and Skills (SKILL.md) unified
-    under one interface
+```
+AgentToolStore/
+├── client/src/toolstore/
+│   ├── native_tool.py          # Entry point: tool_store_tool()
+│   ├── docker_pool.py          # Warm container + worker protocol
+│   ├── mcp_client.py           # Full MCP protocol client
+│   ├── mcp_server.py           # ToolStore as an MCP server
+│   ├── skill_manager.py        # SKILL.md parser & executor
+│   ├── schema_converter.py     # Bidirectional format conversion
+│   ├── index_manager.py        # Tool index search & lookup
+│   ├── config_manager.py       # ~/.toolstore/config.json
+│   ├── transport.py            # stdio, SSE, and Docker transports
+│   └── cli.py                  # Command-line interface
+├── server/app/
+│   ├── main.py                 # FastAPI server entry point
+│   ├── models.py               # SQLAlchemy models (Tool, User)
+│   └── api/v1/                 # REST endpoints
+├── plan/                       # Specifications & roadmap
+└── docs/                       # Integration design documents
+```
+
+---
+
+## License
+
+MIT
