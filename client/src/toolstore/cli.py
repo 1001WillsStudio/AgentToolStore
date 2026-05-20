@@ -808,7 +808,7 @@ def mcp_server_add_docker(
 def mcp_server_add(
     name: str = typer.Argument(..., help="Name for this MCP server"),
     command: str = typer.Argument(..., help="Command to start the server (e.g. npx)"),
-    args: str = typer.Argument(None, help="Additional arguments (space-separated)"),
+    args: str = typer.Option(None, "--args", "-a", help="Additional arguments (space-separated)"),
 ):
     """Register a stdio-based MCP server (local process, not Docker)."""
     server_config: dict = {"command": command}
@@ -832,14 +832,8 @@ def mcp_server_remove(
         console.print(f"[red]MCP server '{name}' not found.[/red]")
         raise typer.Exit(1)
     config_manager.remove_mcp_server(name)
-    # Also shut down any warm container for this server
-    try:
-        from toolstore.docker_pool import get_pool
-        image = servers[name].get("image")
-        if image:
-            get_pool().shutdown_image(image)
-    except Exception:
-        pass
+    # Note: MCP server containers are managed by DockerTransport,
+    # not the shared worker — they stop when the client disconnects.
     console.print(f"[green]Removed MCP server '{name}'.[/green]")
 
 
