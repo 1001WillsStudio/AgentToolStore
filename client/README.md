@@ -1,36 +1,49 @@
-# ToolStore (V1)
+# ToolStore CLI
 
-**The "PyPI for AI Agents" - Local Connector Edition**
+<p align="center">
+  <strong>pip for AI agents — the universal meta-tool client.</strong>
+</p>
 
-ToolStore is a local CLI tool that gives AI Agents instant access to:
-1.  **Public APIs** (Auth-free utilities like Weather, Time, Math).
-2.  **Local Tools** (via MCP Servers like Filesystem, GitHub).
+---
 
-It handles discovery (Search) and execution (Proxy), abstracting away the differences between APIs and Local Tools.
+The ToolStore CLI is the local client that gives any AI agent instant access to
+every tool in the ecosystem — public APIs, MCP servers, local skills, and
+sandboxed code modules — all through a single, uniform interface.
 
-**Supported Interfaces:**
-*   **CLI Mode:** `toolstore search` / `toolstore use`
-*   **LLM Native:** Export OpenAI-compatible schemas for direct integration.
+It handles discovery, inspection, schema conversion, and execution across all
+tool types.  The agent doesn't need to know whether a tool is an HTTP endpoint,
+a Docker container, or an MCP server — it just calls it.
+
+For the full vision and architecture, see the [main README](../README.md).
+
+---
 
 ## 🚀 Quick Start
 
-### 1. Install
-*(Coming soon via pip)*
+### Install
 
-### 2. Update Index
 ```bash
-$ toolstore update
+pip install -e .
 ```
 
-### 3. Search Tools
+### Pull the public tool index
+
 ```bash
-$ toolstore search "weather"
-Found: world-time-api, weather-forecast
+toolstore update                    # fetch the latest index
+toolstore search "weather"          # search across all tool types
+toolstore info weather-api          # inspect a tool's schema
 ```
 
-### 4. Use a Tool
+### Run a tool
+
 ```bash
-$ toolstore use world-time-api --timezone "America/New_York"
+toolstore use world-time-api --timezone "America/New_York"
+```
+
+### Publish your own tool
+
+```bash
+toolstore publish my-tool.json
 ```
 
 ## 👤 Authentication & Publishing

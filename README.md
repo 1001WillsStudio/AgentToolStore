@@ -1,62 +1,130 @@
-# AgentToolStore
-
-**The universal tool platform for AI agents.**
-
-Register any tool — an HTTP endpoint, an MCP server, a SKILL.md file, or raw Python
-code — and every agent in your ecosystem can discover, inspect, and run it through a
-single unified interface.  AgentToolStore bridges the gaps between tool ecosystems,
-converting schemas on the fly so tools work across OpenAI, Anthropic, MCP, and any
-other agent framework.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://via.placeholder.com/800x200/1a1a2e/eee?text=🛠️+AgentToolStore">
+    <img alt="AgentToolStore" src="https://via.placeholder.com/800x200/ffffff/333?text=🛠️+AgentToolStore" width="600">
+  </picture>
+</p>
 
 <p align="center">
-  <strong>
-    <a href="#quick-start">Quick Start</a> ·
-    <a href="#tool-types">Tool Types</a> ·
-    <a href="#docker-sandbox">Docker Sandbox</a> ·
-    <a href="#mcp-support">MCP Support</a> ·
-    <a href="#configuration">Configuration</a>
-  </strong>
+  <strong>The "pip for AI Agents" — one tool store, every agent, any tool.</strong>
+</p>
+
+<p align="center">
+  <a href="#-the-vision">Vision</a> ·
+  <a href="#-the-problem">Problem</a> ·
+  <a href="#-how-it-works">How It Works</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-tool-types">Tool Types</a> ·
+  <a href="#-roadmap">Roadmap</a> ·
+  <a href="#-contributing">Contributing</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-306998.svg" alt="Python 3.10+"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status: Alpha"></a>
 </p>
 
 ---
 
-## Architecture
+## 💡 The Vision
+
+Python didn't conquer the world because it was the fastest language. It won because of **pip** —
+a single command that gave every developer instant access to 500,000+ libraries.
+
+AI agents today each speak their own tool language — and that's fine.  Claude Desktop
+has MCP.  GPT has function calling.  Most frameworks already support skills.
+
+The problem isn't that these formats are incompatible.  It's that there is no
+**universal meta-tool** that every agent can reach for.  Every agent reimplements
+discovery from scratch.  Every project rebuilds its tool catalog.  There's no shared
+layer that grows with the ecosystem — nothing like what `pip` did for Python.
+
+**AgentToolStore is that layer.**
+
+Think of it not as a bridge between formats, but as pip: a single, well-maintained
+meta-tool that any agent — regardless of framework — can use to discover and invoke
+tools.  Once an agent knows `tool_store_tool(...)`, it gains access to every API,
+every MCP server, every skill, and every sandboxed code module ever published.
+No per-framework wiring.  No reinvention.  Just one tool to rule them all.
+
+> 🚀 **Our goal**: make `toolstore install` as obvious and universal for AI agents as
+> `pip install` is for Python developers today.
+
+---
+
+## 🧩 The Problem
+
+| Problem | The pain today | How AgentToolStore fixes it |
+|---------|---------------|---------------------------|
+| **No universal meta-tool** | There's no single, shared tool layer that every agent can use — every project reinvents discovery, every framework maintains its own catalog | One `tool_store_tool(...)` call gives any agent access to the entire tool ecosystem.  Like pip, it grows *with* the community instead of being rebuilt by each team. |
+| **Execution risk** | Running third-party tool code directly on your infrastructure | Docker sandbox with client-side image approval — your rules, your boundaries |
+| **Discovery friction** | No central place to find, compare, and trust tools | Search across _all_ tool types from one index; inspect schemas before running |
+| **Ecosystem fragmentation** | Great tools exist (MCP servers, skills, APIs) but they're scattered across registries; no single place ties them together | A unified index that surfaces *all* tool types together — search once, find everything, regardless of origin or format |
+| **Cold start** | Every new agent project starts from an empty tool set | One `toolstore update` gives you the entire public index |
+| **Training-deployment gap** | Agent behaves differently in production because tools differ between dev/staging/prod — brittle, unpredictable behavior | Same tool index everywhere — the agent sees identical tools in training, eval, and deployment.  Deterministic, auditable, reproducible. |
+
+---
+
+### 🎯 Training–Deployment Coherence
+
+Today, training an agent with one set of tools and deploying it with a different
+set is a recipe for silent failure.  The agent learned to call `create_jira_ticket` in
+staging, but production has a different endpoint — or no endpoint at all.  Even worse:
+different teams wire up different tools, so an agent that works on one engineer's
+machine breaks on another's.
+
+A shared, public tool store solves this at the ecosystem level.  When most tools are
+published to — and consumed from — a single registry, the **training environment and
+deployment environment naturally converge**.  The agent that learned to search the web
+via the public `web-search` tool in training will find that exact same `web-search`
+tool waiting for it in production, with the same schema, same behavior, same
+semantics.  No per-environment wiring.  No surprising gaps.
+
+This is the same dynamic that made pip and npm indispensable: the bigger the shared
+registry grows, the more homogenous the ecosystem becomes, and the fewer painful
+"works on my machine" surprises you hit when moving from development to deployment.
+**The network effect is the reliability mechanism.**
+
+---
+
+## 🏗️ Architecture
 
 ```
-                        ┌──────────────────────┐
-                        │    Any AI Agent       │
-                        │  (Claude, GPT, etc.)  │
-                        └──────────┬───────────┘
-                                   │
-                    tool_store_tool(action, ...)
-                                   │
-        ┌──────────────────────────┼──────────────────────────┐
-        │                          │                          │
-        ▼                          ▼                          ▼
- ┌─────────────┐          ┌───────────────┐          ┌──────────────┐
- │  API tools  │          │  Docker tools │          │  MCP tools   │
- │  HTTP GET   │          │  warm worker  │          │  JSON-RPC    │
- │  / POST     │          │  (persistent) │          │  over stdio  │
- └─────────────┘          └───────┬───────┘          └──────┬───────┘
-                                  │                         │
-                                  │  ┌──────────────────────┤
-                                  │  │   MCP-in-Docker      │
-                                  │  │   (1 container per   │
-                                  │  │    MCP server)       │
-                                  │  └──────────────────────┤
-                                  ▼                         ▼
-                         ┌────────────────────────────────────┐
-                         │         Docker Engine               │
-                         │    (host daemon or DinD socket)     │
-                         └────────────────────────────────────┘
-                                   │
-                          Registry Server
-                        (FastAPI + SQLite)
+                          ┌──────────────────────┐
+                          │    Any AI Agent       │
+                          │  (Claude, GPT, etc.)  │
+                          └──────────┬───────────┘
+                                     │
+                      tool_store_tool(action, ...)
+                                     │
+          ┌──────────────────────────┼──────────────────────────┐
+          │                          │                          │
+          ▼                          ▼                          ▼
+   ┌─────────────┐          ┌───────────────┐          ┌──────────────┐
+   │  API tools  │          │  Docker tools │          │  MCP tools   │
+   │  HTTP GET   │          │  warm worker  │          │  JSON-RPC    │
+   │  / POST     │          │  (persistent) │          │  over stdio  │
+   └─────────────┘          └───────┬───────┘          └──────┬───────┘
+                                    │                         │
+                                    │  ┌──────────────────────┤
+                                    │  │   MCP-in-Docker      │
+                                    │  │   (1 container per   │
+                                    │  │    MCP server)       │
+                                    │  └──────────────────────┤
+                                    ▼                         ▼
+                           ┌────────────────────────────────────┐
+                           │         Docker Engine               │
+                           │    (host daemon or DinD socket)     │
+                           └────────────────────────────────────┘
+                                     │
+                            Registry Server
+                          (FastAPI + SQLite)
 ```
 
 ---
 
-## Tool Types
+## 🛠️ Tool Types
 
 AgentToolStore supports four kinds of tools.  Every tool type is discovered, inspected,
 and executed through the exact same interface — the agent doesn't need to know or care
@@ -128,7 +196,34 @@ but need to control what code runs on your infrastructure.
 
 ---
 
-## MCP Support
+## 🔒 Your Tools, Your Rules — Privacy by Default
+
+Not every tool belongs on a public registry.  Internal APIs, proprietary business
+logic, customer data pipelines — some tools should never leave your infrastructure.
+
+AgentToolStore treats **public and private as equal citizens**:
+
+- **Local MCP servers** — register an MCP server running on your machine or private
+  network.  It appears in your tool index just like any public tool, but the registry
+  never sees it.  Ideal for internal systems (Jira, databases, CI/CD) that contain
+  credentials or proprietary data.
+
+- **Local skills** — drop a `SKILL.md` file in `~/.toolstore/skills/` and it's
+  immediately available.  Perfect for team-specific workflows, company playbooks,
+  or anything you'd rather not upload.
+
+- **No forced sharing** — publishing to the public registry is entirely optional.
+  The CLI works perfectly offline with zero external dependencies once your local
+  index is set up.
+
+> 🏢 **For enterprises**: you can run a private registry server on your own
+> infrastructure, giving your entire organization a shared, governed tool catalog
+> without any data leaving your network.  The architecture is the same — just point
+> `toolstore` at your own registry URL.
+
+---
+
+## 🔌 MCP Support
 
 AgentToolStore is a full MCP participant — both client and server.
 
@@ -166,7 +261,7 @@ toolstore serve --mode sse --port 9090
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Install the CLI
 
@@ -243,7 +338,7 @@ uvicorn app.main:app --reload
 
 ---
 
-## Using from an Agent
+## 🤖 Using from an Agent
 
 ```python
 from toolstore.native_tool import tool_store_tool
@@ -263,7 +358,7 @@ tool_store_tool(action="execute",
 
 ---
 
-## Schema Bridge
+## 🔄 Schema Bridge
 
 Tool definitions are automatically converted between three formats:
 
@@ -277,7 +372,7 @@ A tool registered once works everywhere.  No format lock-in.
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 All settings live in `~/.toolstore/config.json`:
 
@@ -322,7 +417,32 @@ toolstore skill add-dir ~/my-skills
 
 ---
 
-## Repository Structure
+## 🗺️ Roadmap
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| **Alpha** | Core CLI, registry server, Docker sandbox, MCP client/server | 🚧 In progress |
+| **Beta** | `pip install toolstore`, public registry, verified publishers, tool ratings | 📋 Planned |
+| **1.0** | Ecosystem integrations (LangChain, CrewAI, AutoGen), SLA guarantees, enterprise auth | 📋 Planned |
+| **Beyond** | Tool composition pipelines, marketplace monetization, federated registries | 💭 Exploring |
+
+---
+
+## 👥 Contributing
+
+We're in active early development and welcome contributors who share the vision of a
+universal tool ecosystem for AI agents.
+
+- **Bug reports & feature requests**: Open an issue
+- **Code contributions**: PRs welcome — please discuss large changes first
+- **Tool publishing**: We'll be opening the public registry during the Beta phase
+- **Sponsorship**: If your organization wants to accelerate this project, reach out
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details (coming soon).
+
+---
+
+## 📁 Repository Structure
 
 ```
 AgentToolStore/
@@ -347,6 +467,13 @@ AgentToolStore/
 
 ---
 
-## License
+## 📄 License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ for the agent ecosystem.  One tool, every agent.</sub>
+</p>
+
