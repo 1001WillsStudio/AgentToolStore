@@ -320,11 +320,12 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     """Run a *docker*-type tool in the single shared warm worker.
 
-    The worker container starts lazily on first use and stays alive forever.
-    ALL docker-type tools share the same container.  Code is piped in via
-    stdin and results are read from stdout using newline-delimited JSON.
+    The module code is loaded once (keyed by a hash of the code string) and
+    the named function is called with the provided arguments.  Multiple tools
+    that share the same code module reuse the same loaded namespace.
     """
     import base64
+    import hashlib
     from toolstore import docker_pool
 
     # 1. Check Docker availability
@@ -348,19 +349,21 @@ def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     if not code.strip():
         return "Error: Docker tool has no code to execute."
 
-    # 3. Build wrapper — args injected by worker
-    args_json = json.dumps(args)
-    wrapper = (
-        "import json as _ts_json\n"
-        f"_ts_raw_args = {args_json!r}\n"
-        "toolstore_args = _ts_json.loads(_ts_raw_args)\n"
-        "TOOLSTORE_ARGS = toolstore_args\n"
-        "del _ts_json, _ts_raw_args\n"
-        + code
-    )
+    # 3. Derive a stable module name from the code hash so that tools
+    #    that share identical code reuse the loaded namespace.
+    module_name = "m_" + hashlib.sha256(code.encode()).hexdigest()[:12]
 
-    # 4. Execute in the single shared worker
+    # 4. The function to call — either declared in the tool definition or
+    #    defaults to "main" by convention.
+    function = tool.get("function", "main")
+
+    # 5. Load the module (no-op if already loaded) and call the function.
     timeout_s = tool.get("timeout", 30)
     worker = docker_pool.get_worker()
-    return worker.execute(wrapper, args, timeout_s)
+
+    load_err = worker.load_module(module_name, code)
+    if load_err:
+        return f"Error loading module: {load_err}"
+
+    return worker.call_function(module_name, function, args, timeout_s)
 

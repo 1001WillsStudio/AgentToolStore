@@ -27,6 +27,8 @@ WORKER_BOOTSTRAP = r'''
 import sys as _sys, json as _json, traceback as _tb
 from io import StringIO as _StringIO
 
+_modules = {}  # module_name -> namespace holding its functions
+
 _sys.__stdout__.write("READY\n")
 _sys.__stdout__.flush()
 
@@ -40,20 +42,56 @@ while True:
         continue
 
     _rid = _req["id"]
-    _code = _req["code"]
-    _args = _req.get("args", {})
+    _action = _req.get("action", "call")
 
-    _cap = _StringIO()
-    _old = _sys.stdout
-    _sys.stdout = _cap
-    try:
-        exec(_code, {"toolstore_args": _args, "TOOLSTORE_ARGS": _args})
-        _res = {"id": _rid, "ok": True, "output": _cap.getvalue()}
-    except Exception:
+    if _action == "load":
+        # Load a module — exec the code, store its namespace.
+        _name = _req["module"]
+        _code = _req["code"]
+        _ns = {}
+        try:
+            exec(_code, _ns)
+        except Exception:
+            _res = {"id": _rid, "ok": False, "output": _tb.format_exc()}
+        else:
+            _modules[_name] = _ns
+            _res = {"id": _rid, "ok": True, "output": f"module '{_name}' loaded"}
+
+    elif _action == "call":
+        _mod = _req["module"]
+        _func = _req["function"]
+        _args = _req.get("args", {})
+        _ns = _modules.get(_mod)
+        if _ns is None:
+            _res = {"id": _rid, "ok": False,
+                    "output": f"module '{_mod}' not loaded"}
+        else:
+            _fn = _ns.get(_func)
+            if _fn is None:
+                _res = {"id": _rid, "ok": False,
+                        "output": f"function '{_func}' not found in module '{_mod}'"}
+            elif not callable(_fn):
+                _res = {"id": _rid, "ok": False,
+                        "output": f"'{_func}' in module '{_mod}' is not callable"}
+            else:
+                _cap = _StringIO()
+                _old = _sys.stdout
+                _sys.stdout = _cap
+                try:
+                    _result = _fn(**_args)
+                    _output = _cap.getvalue()
+                    if _result is not None:
+                        _output += _json.dumps(_result, default=str)
+                    _res = {"id": _rid, "ok": True, "output": _output}
+                except Exception:
+                    _res = {"id": _rid, "ok": False,
+                            "output": _cap.getvalue() + _tb.format_exc()}
+                finally:
+                    _sys.stdout = _old
+
+    else:
         _res = {"id": _rid, "ok": False,
-                "output": _cap.getvalue() + _tb.format_exc()}
-    finally:
-        _sys.stdout = _old
+                "output": f"unknown action '{_action}'"}
 
     _sys.__stdout__.write(_json.dumps(_res) + "\n")
     _sys.__stdout__.flush()
@@ -123,10 +161,10 @@ def dind_socket_check() -> Optional[str]:
 class WarmContainer:
     """The single persistent Docker container that runs ALL docker-type tools.
 
-    Started once (lazily, on first use) and kept alive forever.  Every
-    docker-type tool invocation pipes code in via stdin and reads the
-    result from stdout.  Calls are serialised through a lock so the
-    single-threaded worker never sees overlapping requests.
+    Started once (lazily, on first use) and kept alive forever.  Code
+    modules are loaded once and cached in the worker; subsequent calls
+    invoke named functions from those modules.
+    """
 
     def __init__(self, image: str, container_name: str) -> None:
         self.image = image
@@ -135,6 +173,7 @@ class WarmContainer:
         self._request_id: int = 0
         self._lock = threading.Lock()
         self._alive = False
+        self._loaded_modules: set = set()  # track what we've sent load for
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -155,13 +194,28 @@ class WarmContainer:
             stderr=subprocess.PIPE,
             text=True,
         )
-        # Bootstrap: first message carries the worker loop.
-        self._write_line(json.dumps({"id": "_bootstrap", "code": WORKER_BOOTSTRAP}))
-        # Wait for the READY sentinel.
-        ready = self._read_line(timeout=15)
-        if not ready or "READY" not in ready:
+        # Bootstrap: load the worker loop as a module via the load action.
+        self._write_line(json.dumps({
+            "id": "_bootstrap",
+            "action": "load",
+            "module": "_worker",
+            "code": WORKER_BOOTSTRAP,
+        }))
+        # Discard the bootstrap response, then send a dummy call to
+        # confirm the worker is running and reading.
+        self._read_line(timeout=15)
+        self._write_line(json.dumps({
+            "id": "_ping",
+            "action": "call",
+            "module": "_worker",
+            "function": "_whoami_does_not_exist",
+            "args": {},
+        }))
+        raw = self._read_line(timeout=15)
+        if raw is None:
             self.stop()
-            raise RuntimeError(f"Worker container failed to start: {ready!r}")
+            raise RuntimeError("Worker did not respond after bootstrap")
+        # Any response (even error) means the worker is alive.
         self._alive = True
 
     def stop(self) -> None:
@@ -188,27 +242,61 @@ class WarmContainer:
             and self.proc.poll() is None
         )
 
-    # -- execute -------------------------------------------------------------
+    # -- load / call ---------------------------------------------------------
 
-    def execute(self, code: str, args: Dict[str, Any], timeout_s: int) -> str:
-        """Pipe *code* + *args* to the worker, return the captured output."""
+    def load_module(self, name: str, code: str, timeout_s: int = 15) -> str:
+        """Load *code* into the worker as a named module (idempotent).
+
+        Returns the worker response string (usually a confirmation or error).
+        """
+        if name in self._loaded_modules:
+            return ""  # already loaded
+
         with self._lock:
             rid = self._request_id
             self._request_id += 1
 
-        self._write_line(json.dumps({"id": rid, "code": code, "args": args}))
-        raw = self._read_line(timeout=timeout_s + 5)
-
+        self._write_line(json.dumps({
+            "id": rid, "action": "load", "module": name, "code": code,
+        }))
+        raw = self._read_line(timeout=timeout_s)
         if raw is None:
-            return f"Error: Docker execution timed out after {timeout_s}s."
-
+            return f"Error: load timed out for module '{name}'"
         try:
             result = json.loads(raw)
         except json.JSONDecodeError:
-            return f"Error: invalid worker response: {raw!r}"
+            return f"Error: invalid load response: {raw!r}"
+        if result.get("ok"):
+            self._loaded_modules.add(name)
+            return ""
+        return result.get("output", "unknown load error")
+
+    def call_function(
+        self, module: str, function: str,
+        args: Dict[str, Any], timeout_s: int,
+    ) -> str:
+        """Call *function* inside *module* with keyword *args*."""
+        with self._lock:
+            rid = self._request_id
+            self._request_id += 1
+
+        self._write_line(json.dumps({
+            "id": rid, "action": "call",
+            "module": module, "function": function,
+            "args": args,
+        }))
+        raw = self._read_line(timeout=timeout_s + 5)
+
+        if raw is None:
+            return f"Error: call timed out after {timeout_s}s"
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            return f"Error: invalid call response: {raw!r}"
 
         if result.get("ok"):
-            return result.get("output", "").strip() or "(no output)"
+            out = result.get("output", "")
+            return out.strip() if out.strip() else "(no output)"
         return f"Error:\n{result.get('output', 'unknown error')}"
 
     # -- I/O helpers ---------------------------------------------------------
