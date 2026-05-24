@@ -375,6 +375,26 @@ class SkillManager:
     def list_skill_names(self) -> List[str]:
         return sorted(self._skills.keys())
 
+    # ------------------------------------------------------------------
+    # ad-hoc discovery (does NOT mutate internal state)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def discover_from_path(path: str | Path, *,
+                           recursive: bool = True) -> "DiscoveryResult":
+        """Scan an arbitrary path for skills without registering them.
+
+        This is a convenience wrapper around
+        :func:`toolstore.skill_discovery.discover_skills`.  It works for
+        both single-skill directories and folder trees containing
+        multiple skills.
+
+        Returns a :class:`DiscoveryResult` with full validation details.
+        """
+        # Local import avoids issues when importing skill_manager alone.
+        from toolstore.skill_discovery import discover_skills
+        return discover_skills(Path(path), recursive=recursive)
+
 
 # ---------------------------------------------------------------------------
 # Singleton

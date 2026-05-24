@@ -1,11 +1,14 @@
+import sys
+from pathlib import Path
+from typing import Optional
+
 import typer
 from rich.console import Console
 from rich.table import Table
-from typing import Optional
-import sys
-from toolstore.index_manager import IndexManager
+
 from toolstore.config_manager import ConfigManager
-from toolstore.skill_manager import get_skill_manager, SkillDefinition
+from toolstore.index_manager import IndexManager
+from toolstore.skill_manager import SkillDefinition, get_skill_manager
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
@@ -539,24 +542,203 @@ def skill_validate(
             console.print(f"  [red]{err}[/red]")
 
 
+@skill_app.command("discover")
+def skill_discover(
+    path: str = typer.Argument(..., help="Root path to scan for skills"),
+    shallow: bool = typer.Option(False, "--shallow",
+                                  help="Single-level scan only (no recursion)"),
+    json_out: bool = typer.Option(False, "--json",
+                                   help="Output as JSON instead of tree"),
+):
+    """Discover skills in a folder tree.
+
+    Walks the directory tree starting at PATH and finds all directories
+    containing a SKILL.md file.  Works for single-skill directories,
+    flat collections, and nested / categorized folder structures
+    (like skills-general/skills/).
+
+    Examples:
+        toolstore skill discover ./my-skill
+        toolstore skill discover ./skills-general/skills
+        toolstore skill discover ./skills-general/skills --shallow
+        toolstore skill discover ./skills-general/skills --json
+    """
+    import json as _json
+    from toolstore.skill_discovery import discover_skills
+
+    result = discover_skills(path, recursive=not shallow)
+
+    if json_out:
+        out = {
+            "root": str(result.root_path),
+            "total": result.total,
+            "valid": result.valid_count,
+            "invalid": result.invalid_count,
+            "skills": [
+                {
+                    "name": ds.name,
+                    "description": ds.description,
+                    "category": ds.category or None,
+                    "rel_path": str(ds.rel_path),
+                    "valid": ds.is_valid,
+                    "errors": ds.errors if not ds.is_valid else [],
+                }
+                for ds in result.skills
+            ],
+            "scan_errors": result.scan_errors,
+        }
+        console.print(_json.dumps(out, indent=2))
+        return
+
+    if result.total == 0:
+        console.print(f"[yellow]No skills found in[/yellow] {result.root_path}")
+        if result.scan_errors:
+            for e in result.scan_errors:
+                console.print(f"  [red]{e}[/red]")
+        return
+
+    console.print(result.tree())
+
+
+def _publish_one_skill(
+    skill_dir: Path, registry_url: str, token: str, base_url: str
+) -> tuple[bool, str]:
+    """Publish a single skill to the registry. Returns (ok, message)."""
+    import json
+    import httpx
+
+    sd = SkillDefinition(skill_dir)
+    if not sd.load():
+        errors = "; ".join(sd.errors)
+        return False, f"{skill_dir.name}: validation failed — {errors}"
+
+    upload_data = sd.to_upload_dict()
+    skills_publish_url = f"{base_url}/skills/publish"
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        response = httpx.post(
+            skills_publish_url, json=upload_data, headers=headers
+        )
+        if response.status_code == 200:
+            result = response.json()
+            action = result.get("action", "published")
+            return True, f"{sd.name}: {action}"
+        else:
+            detail = ""
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            return False, f"{sd.name}: HTTP {response.status_code} — {detail}"
+    except httpx.ConnectError:
+        return False, f"{sd.name}: could not reach {base_url}"
+    except Exception as exc:
+        return False, f"{sd.name}: {exc}"
+
+
 @skill_app.command("publish")
 def skill_publish(
-    path: str = typer.Argument(..., help="Path to skill directory (must contain SKILL.md)"),
+    path: str = typer.Argument(..., help="Path to skill directory or folder of skills"),
     registry: str = typer.Option(None, "--registry", "-r",
                                   help="Registry URL (defaults to configured registry)"),
+    batch: bool = typer.Option(False, "--batch", help="Publish all skills found in a folder tree"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (batch mode)"),
 ):
-    """Publish a skill to the ToolStore registry.
+    """Publish a skill (or batch of skills) to the ToolStore registry.
 
-    Reads the skill directory, validates SKILL.md, bundles files, and
-    uploads everything via the `POST /skills/publish` endpoint.
+    Single mode (default):
+        toolstore skill publish ./my-skill
 
-    Example: toolstore skill publish ./my-skill
+    Batch mode (publish a whole tree):
+        toolstore skill publish ./skills-general/skills --batch
+        toolstore skill publish ./skills-general/skills --batch --yes
     """
     import json
     import httpx
     from pathlib import Path
 
-    # 1. Load and validate the skill
+    # ------------------------------------------------------------------
+    # Authentication (shared by both modes)
+    # ------------------------------------------------------------------
+    token = config_manager.get_token()
+    if not token:
+        console.print("[yellow]Please login first using 'toolstore login'[/yellow]")
+        raise typer.Exit(1)
+
+    base_url: str
+    if registry:
+        base_url = registry.rstrip("/")
+    else:
+        base_url = config_manager.get_registry_url().replace("/index.json", "")
+
+    # ------------------------------------------------------------------
+    # Batch mode
+    # ------------------------------------------------------------------
+    if batch:
+        from toolstore.skill_discovery import discover_skills
+
+        result = discover_skills(path)
+        if result.total == 0:
+            console.print(f"[yellow]No skills found in {path}[/yellow]")
+            if result.scan_errors:
+                for e in result.scan_errors:
+                    console.print(f"  [red]{e}[/red]")
+            raise typer.Exit(1)
+
+        console.print(result.tree())
+
+        if result.invalid_skills:
+            console.print(
+                f"\n[yellow]⚠ {result.invalid_count} skill(s) have validation "
+                f"errors and will be skipped.[/yellow]"
+            )
+
+        targets = result.valid_skills
+        if not targets:
+            console.print("[red]No valid skills to publish.[/red]")
+            raise typer.Exit(1)
+
+        # Confirmation
+        if not yes:
+            names = ", ".join(ds.name for ds in targets)
+            console.print(
+                f"\nAbout to publish [bold]{len(targets)} skill(s)[/bold]: "
+                f"{names}"
+            )
+            confirm = typer.confirm("Proceed?")
+            if not confirm:
+                console.print("Aborted.")
+                raise typer.Exit(0)
+
+        # Publish loop
+        ok = 0
+        fail = 0
+        for ds in targets:
+            ok_flag, msg = _publish_one_skill(
+                ds.skill_def.skill_dir, registry, token, base_url
+            )
+            if ok_flag:
+                console.print(f"  [green]✓[/green] {msg}")
+                ok += 1
+            else:
+                console.print(f"  [red]✗[/red] {msg}")
+                fail += 1
+
+        console.print(
+            f"\n[bold]Done:[/bold] {ok} published, {fail} failed, "
+            f"{result.invalid_count} skipped"
+        )
+        if fail:
+            raise typer.Exit(1)
+        return
+
+    # ------------------------------------------------------------------
+    # Single-skill mode (original behaviour)
+    # ------------------------------------------------------------------
     skill_dir = Path(path).resolve()
     if not skill_dir.is_dir():
         console.print(f"[red]Error:[/red] '{path}' is not a directory")
@@ -575,33 +757,15 @@ def skill_publish(
     if files_count:
         console.print(f"  Bundled files: {files_count}")
 
-    # 2. Serialize for upload
     upload_data = sd.to_upload_dict()
     console.print(
         f"[blue]Preparing upload "
         f"({len(upload_data.get('body', ''))} bytes body)...[/blue]"
     )
 
-    # 3. Authenticate
-    token = config_manager.get_token()
-    if not token:
-        console.print(
-            "[yellow]Please login first using 'toolstore login'[/yellow]"
-        )
-        raise typer.Exit(1)
-
-    # 4. Determine registry URL
-    base_url: str
-    if registry:
-        base_url = registry.rstrip("/")
-    else:
-        base_url = config_manager.get_registry_url().replace("/index.json", "")
-
     skills_publish_url = f"{base_url}/skills/publish"
-
     console.print(f"Publishing [cyan]{sd.name}[/cyan] to {base_url}...")
 
-    # 5. Upload
     try:
         headers = {
             "Authorization": f"Bearer {token}",
