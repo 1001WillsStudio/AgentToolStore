@@ -22,7 +22,7 @@ app = FastAPI(title="ToolStore Registry", lifespan=lifespan)
 # -- Pydantic Models for Auth --
 class UserCreate(BaseModel):
     username: str
-    email: str
+    email: Optional[str] = None
     password: str
 
 class Token(BaseModel):

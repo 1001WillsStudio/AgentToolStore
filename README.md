@@ -53,6 +53,34 @@ No per-framework wiring.  No reinvention.  Just one tool to rule them all.
 
 ---
 
+## 🙏 Help Us Build This — Every Contribution Matters
+
+This project is not backed by a big company or VC funding.  It's a moonshot by a
+small group of people who believe the agent ecosystem desperately needs a shared
+tool layer — something as obvious and universal as `pip` is for Python.
+
+**We cannot do this alone.  We need you.**
+
+Whether you're an individual developer, an open-source enthusiast, a startup, or
+an enterprise — there is a way for you to help.  This project will only succeed if
+the community rallies behind it the way Python's community rallied behind pip.
+
+| You are... | How you can help |
+|-------------|-----------------|
+| 🧑‍💻 **A developer** | Contribute code, write tools, improve docs, report bugs |
+| 🏢 **An organization** | Sponsor development, run a private registry, publish internal tools, provide infrastructure |
+| 🧪 **An early adopter** | Test the CLI, build integrations, give feedback on the API |
+| 📢 **An advocate** | Star the repo, share the vision, write about it, present at meetups |
+| 💰 **A sponsor** | Fund development directly — GitHub Sponsors, Open Collective, or reach out for custom partnerships |
+
+> 🚨 **The window is open now.**  The agent ecosystem is still young.  The patterns
+> that win today will define how agents work for the next decade.  If we build the
+> shared tool layer now, every agent — regardless of framework — benefits forever.
+> If we wait, fragmentation calcifies and the opportunity is lost.
+
+**Reach out directly:** [<!-- email/contact placeholder -->]
+
+---
 ## 🧩 The Problem
 
 | Problem | The pain today | How AgentToolStore fixes it |
@@ -428,17 +456,73 @@ toolstore skill add-dir ~/my-skills
 
 ---
 
-## 👥 Contributing
+## 👥 Contributing & Support
 
-We're in active early development and welcome contributors who share the vision of a
-universal tool ecosystem for AI agents.
+This project lives or dies by its community.  We are actively, urgently looking for
+contributors and supporters of every kind.  If this vision resonates with you,
+**please get involved**.
 
-- **Bug reports & feature requests**: Open an issue
-- **Code contributions**: PRs welcome — please discuss large changes first
-- **Tool publishing**: We'll be opening the public registry during the Beta phase
-- **Sponsorship**: If your organization wants to accelerate this project, reach out
+### 💻 Code Contributions
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details (coming soon).
+- **Good first issues**: We tag beginner-friendly issues — look for the label
+- **Core development**: The CLI (`client/`), registry server (`server/`), MCP
+  protocol, Docker sandbox — all need work
+- **Integrations**: Build connectors for LangChain, CrewAI, AutoGen, Semantic
+  Kernel, and other agent frameworks
+- **Tool publishing**: Publish high-quality tools to the registry — APIs, MCP
+  servers, skills, and Docker tools are all welcome
+- **Documentation**: Tutorials, API reference, examples, deployment guides
+
+Please open an issue to discuss larger changes before submitting a PR.
+
+### 🤝 Organizational Partnerships
+
+If your company or organization wants to accelerate this project:
+
+- **Run a private registry** for your internal tools — we'll help you deploy it
+- **Sponsor specific features or milestones** — get priority development on what
+  matters most to you
+- **Provide infrastructure** — CI/CD, hosting for the public registry, Docker
+  image registries
+- **Second full-time contributors** — donate engineering time from your team
+
+### 💰 Financial Sponsorship
+
+Building universal infrastructure takes sustained effort.  Financial support lets
+us work on this full-time and move faster.
+
+| Tier | What it supports |
+|------|------------------|
+| 🌱 **Community** | Coffee for late-night coding sessions.  Every dollar counts. |
+| 🌿 **Supporter** | Server costs, domain, CI/CD infrastructure |
+| 🌳 **Sustainer** | Part-time dedicated development |
+| 🏛️ **Enterprise** | Full-time development, SLA guarantees, dedicated support channel |
+
+<!-- TODO: add actual sponsorship links (GitHub Sponsors, Open Collective, Patreon, etc.) -->
+
+**To discuss sponsorship or partnership:** reach out directly — we'll set up a call
+and figure out how we can work together.
+
+### 🌟 Other Ways to Help
+
+- **Star the repo** — it genuinely helps with visibility and discovery
+- **Share the vision** — blog posts, tweets, talks, podcasts, newsletter mentions
+- **Use it** — the more people building on AgentToolStore, the stronger the
+  network effect becomes
+- **Give feedback** — tell us what's broken, what's confusing, what's missing
+
+### 📋 What We Need Most Right Now
+
+- [ ] **Core contributors** — people who can own subsystems (MCP, Docker sandbox, schema bridge, registry server)
+- [ ] **Tool publishers** — seed the registry with high-quality tools so early adopters see immediate value
+- [ ] **Framework integrators** — build the connectors that make AgentToolStore a one-liner in every agent framework
+- [ ] **Design partners** — organizations willing to deploy the private registry and give real-world feedback
+- [ ] **Sponsors** — funding to move from nights-and-weekends to full-time development
+
+> 💬 **The only wrong way to help is not helping at all.**  If you're not sure how
+> you can contribute, just reach out — we'll find something meaningful for you.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for detailed contribution guidelines.
 
 ---
 
@@ -474,6 +558,12 @@ MIT — see [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <sub>Built with ❤️ for the agent ecosystem.  One tool, every agent.</sub>
+  <strong>🌟 Star this repo · Share the vision · Join the mission 🌟</strong>
+</p>
+
+<p align="center">
+  <sub>AgentToolStore is built in the open, for the community, by people who believe</sub><br>
+  <sub>that AI agents deserve a shared tool ecosystem as rich and accessible as pip made Python.</sub><br>
+  <sub>Be part of it.  <strong>One tool, every agent — let's make it real.</strong></sub>
 </p>
 

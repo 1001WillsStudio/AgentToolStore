@@ -595,6 +595,23 @@ function escAttr(s) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Theme toggle
+// ═══════════════════════════════════════════════════════════════════════
+
+(function () {
+  var toggle = document.getElementById('themeToggle');
+  var theme = localStorage.getItem('toolstore-theme') || 'light';
+  document.documentElement.setAttribute('data-theme', theme);
+  toggle.textContent = theme === 'dark' ? '🌙' : '☀️';
+  toggle.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('toolstore-theme', next);
+    toggle.textContent = next === 'dark' ? '🌙' : '☀️';
+  });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════════════
 
