@@ -530,11 +530,17 @@ class _Handler(SimpleHTTPRequestHandler):
                     "invalid": result.invalid_count})
 
     def _upload_skill(self):
-        """Handle browser-based skill upload (JSON-payload with base64 zip)."""
+        """Handle browser-based skill upload (JSON-payload with base64 zip).
+
+        Discovers ALL skills in the archive (recursively), validates each,
+        and installs them — just like ``_register_skill_folder`` but against
+        an uploaded zip instead of a server-side path.
+        """
         import tempfile
         import zipfile
         import base64
         from io import BytesIO
+        from ..skill_discovery import discover_skills
 
         try:
             body = self._body()
@@ -555,38 +561,43 @@ class _Handler(SimpleHTTPRequestHandler):
             with zipfile.ZipFile(BytesIO(zip_data)) as zf:
                 zf.extractall(tmp)
 
-            # Find SKILL.md inside the extracted tree
-            skill_md = None
-            for f in tmp.rglob("SKILL.md"):
-                if f.is_file():
-                    skill_md = f
-                    break
-
-            if not skill_md:
+            # Discover ALL skills in the extracted tree (recursive)
+            result = discover_skills(tmp)
+            if result.total == 0:
                 self._json({"error": "No SKILL.md found in uploaded archive"}, 400); return
-
-            skill_dir = skill_md.parent
-
-            sd = SkillDefinition(skill_dir)
-            if not sd.load():
-                self._json({"error": "Skill validation failed",
-                            "details": sd.errors}, 400); return
 
             cm = ConfigManager()
             cm.load()
             sm = get_skill_manager(cm.get_skill_dirs())
 
-            installed = sm.install_skill(skill_dir)
-            if installed is None:
-                self._json({"error": "Failed to install skill"}, 500); return
+            registered = []
+            failed = []
+            for ds in result.valid_skills:
+                try:
+                    installed = sm.install_skill(ds.skill_def.skill_dir)
+                    if installed:
+                        registered.append(installed.name)
+                    else:
+                        failed.append({"name": ds.name,
+                                       "error": "install returned None"})
+                except Exception as exc:
+                    failed.append({"name": ds.name, "error": str(exc)})
 
+            # Also report invalid skills that were skipped
+            for ds in result.invalid_skills:
+                failed.append({"name": ds.name or str(ds.rel_path),
+                               "error": "; ".join(ds.errors)})
+
+            # Persist skill dirs to config
             for d in sm.skill_dirs:
                 cm.add_skill_dir(str(d))
 
             self._json({"success": True,
-                        "skill": installed.name,
-                        "description": installed.description[:100],
-                        "path": str(installed.skill_dir)})
+                        "registered": registered,
+                        "failed": failed,
+                        "total": result.total,
+                        "valid": result.valid_count,
+                        "invalid": result.invalid_count})
         except zipfile.BadZipFile:
             self._json({"error": "Uploaded file is not a valid zip archive"}, 400)
         finally:
