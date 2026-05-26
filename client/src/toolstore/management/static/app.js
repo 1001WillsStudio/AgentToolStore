@@ -222,40 +222,38 @@ function renderMcpCard(id, srv) {
 
 function renderToolRow(name, tool) {
   var exp = tool.exposure || 'secondary';
+  var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
+    return '<option value="' + v + '"' + (v === exp ? ' selected' : '') + '>' + v + '</option>';
+  }).join('');
   return '<div class="ts-tool-row">'
     + '<div class="ts-tool-info">'
     + '<div class="ts-tool-name">' + esc(name) + '</div>'
     + '<div class="ts-tool-desc">' + esc(tool.description || '') + '</div>'
     + '</div>'
     + '<div class="ts-tool-controls">'
-    + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)" title="Click to cycle: primary → secondary → hidden">' + exp + '</span>'
+    + '<select class="ts-exposure-select ' + exp + '" data-tool="' + escAttr(name) + '" onchange="setExposure(this)">' + opts + '</select>'
     + '</div>'
     + '</div>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Cycle exposure
+// Set exposure via dropdown
 // ═══════════════════════════════════════════════════════════════════════
 
-var EXPOSURE_ORDER = ['primary', 'secondary', 'hidden'];
-
-async function cycleExposure(name, event) {
+async function setExposure(select) {
+  var name = select.dataset.tool;
+  var next = select.value;
   var tool = state.tools[name];
-  if (!tool) return;
-  var current = tool.exposure || 'secondary';
-  var idx = EXPOSURE_ORDER.indexOf(current);
-  var next = EXPOSURE_ORDER[(idx + 1) % EXPOSURE_ORDER.length];
+  if (!tool) { toast('Tool not found: ' + name, 'error'); return; }
   try {
     await api.patchTool(name, { exposure: next });
     tool.exposure = next;
     state.tools[name] = tool;
-    // Update badge inline without full re-render
-    var badge = event.target;
-    badge.textContent = next;
-    badge.className = 'ts-exposure ' + next;
+    select.className = 'ts-exposure-select ' + next;
     toast(esc(name) + ' → ' + next);
   } catch (e) {
-    toast('Failed to update: ' + e.message, 'error');
+    toast('Failed: ' + e.message, 'error');
+    select.value = tool.exposure || 'secondary';
   }
 }
 
@@ -429,7 +427,7 @@ async function removeSkill(name) {
   try {
     await api.removeSkill(name);
     delete state.skills[name];
-    delete state.tools[name];
+    delete state.tools['skill:' + name];
     toast('Removed: ' + esc(name));
     refreshSkills();
   } catch (e) {

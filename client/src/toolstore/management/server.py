@@ -522,6 +522,18 @@ class _Handler(SimpleHTTPRequestHandler):
         for d in sm.skill_dirs:
             cm.add_skill_dir(str(d))
 
+        # Register each installed skill as a tool (survives page refresh)
+        for name in registered:
+            cm.add_tool(
+                tool_name=f"skill:{name}",
+                source=f"skill:{name}",
+                enabled=True,
+                exposure="secondary",
+                parallel_safe=False,
+                subagent_safe=False,
+                description="",
+            )
+
         self._json({"success": True,
                     "registered": registered,
                     "failed": failed,
@@ -592,6 +604,19 @@ class _Handler(SimpleHTTPRequestHandler):
             for d in sm.skill_dirs:
                 cm.add_skill_dir(str(d))
 
+            # Register each installed skill as a tool so it survives page
+            # refresh and can be patched (exposure, …) afterwards.
+            for name in registered:
+                cm.add_tool(
+                    tool_name=f"skill:{name}",
+                    source=f"skill:{name}",
+                    enabled=True,
+                    exposure="secondary",
+                    parallel_safe=False,
+                    subagent_safe=False,
+                    description="",
+                )
+
             self._json({"success": True,
                         "registered": registered,
                         "failed": failed,
@@ -634,6 +659,17 @@ class _Handler(SimpleHTTPRequestHandler):
         # Persist skill dirs to config
         for d in sm.skill_dirs:
             cm.add_skill_dir(str(d))
+
+        # Register as a tool so it survives page refresh
+        cm.add_tool(
+            tool_name=f"skill:{installed.name}",
+            source=f"skill:{installed.name}",
+            enabled=True,
+            exposure="secondary",
+            parallel_safe=False,
+            subagent_safe=False,
+            description="",
+        )
 
         self._json({"success": True,
                     "skill": installed.name,
