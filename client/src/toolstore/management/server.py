@@ -250,7 +250,6 @@ class _Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
         try:
-            # File-upload endpoint — multipart, not JSON
             if p == "/api/skills/upload":
                 self._upload_skill()
                 return
@@ -530,51 +529,27 @@ class _Handler(SimpleHTTPRequestHandler):
                     "valid": result.valid_count,
                     "invalid": result.invalid_count})
 
-    # ── API: skill upload (multipart zip from browser) ─────────────────
-
     def _upload_skill(self):
-        """Handle browser-based skill upload (multipart/form-data zip)."""
+        """Handle browser-based skill upload (JSON-payload with base64 zip)."""
         import tempfile
         import zipfile
-        import cgi
+        import base64
         from io import BytesIO
 
-        ctype = self.headers.get("Content-Type", "")
-        if "multipart/form-data" not in ctype:
-            self._json({"error": "Expected multipart/form-data"}, 400); return
+        try:
+            body = self._body()
+        except Exception:
+            self._json({"error": "Invalid JSON body"}, 400); return
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length)
+        archive_b64 = body.get("archive", "")
+        if not archive_b64:
+            self._json({"error": "No 'archive' field in upload"}, 400); return
 
-        # Extract boundary from Content-Type
-        boundary = None
-        for part in ctype.split(";"):
-            part = part.strip()
-            if part.startswith("boundary="):
-                boundary = part.split("=", 1)[1].strip('"')
-                break
-        if not boundary:
-            self._json({"error": "No multipart boundary"}, 400); return
+        try:
+            zip_data = base64.b64decode(archive_b64)
+        except Exception:
+            self._json({"error": "Invalid base64 data"}, 400); return
 
-        # Parse multipart with cgi — prepend header line
-        fs = cgi.FieldStorage(
-            BytesIO(b"Content-Type: " + ctype.encode() + b"\r\n" + body),
-            environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
-        )
-
-        archive_field = fs.getfirst("archive") if hasattr(fs, "getfirst") else fs["archive"]
-        if not archive_field or not hasattr(archive_field, "file"):
-            self._json({"error": "No archive file uploaded"}, 400); return
-
-        zip_data = (
-            archive_field.file.read()
-            if hasattr(archive_field.file, "read")
-            else archive_field.value
-        )
-        if isinstance(zip_data, str):
-            zip_data = zip_data.encode("latin-1")
-
-        # Extract to temp dir
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-skill-"))
         try:
             with zipfile.ZipFile(BytesIO(zip_data)) as zf:
@@ -612,6 +587,8 @@ class _Handler(SimpleHTTPRequestHandler):
                         "skill": installed.name,
                         "description": installed.description[:100],
                         "path": str(installed.skill_dir)})
+        except zipfile.BadZipFile:
+            self._json({"error": "Uploaded file is not a valid zip archive"}, 400)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

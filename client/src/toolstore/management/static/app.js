@@ -42,7 +42,7 @@ const api = {
   removeMcp(id)         { return this._fetch('DELETE', `/api/mcp/servers/${id}`); },
   listSkills()          { return this._fetch('GET', '/api/skills'); },
   registerSkill(cfg)    { return this._fetch('POST', '/api/skills', cfg); },
-  uploadSkill(formData) { return this._fetch('POST', '/api/skills/upload', formData, false); },
+  uploadSkill(payload) { return this._fetch('POST', '/api/skills/upload', payload); },
   registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
@@ -502,10 +502,17 @@ document.getElementById('form-skill').addEventListener('submit', async function 
         zip.file(innerPath, buf);
       }
       var zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } });
-      var formData = new FormData();
-      formData.append('archive', zipBlob, 'skill.zip');
+      // Convert to base64 (skills are small, overhead is fine)
+      var base64 = await new Promise(function (resolve) {
+        var reader = new FileReader();
+        reader.onloadend = function () {
+          var b64 = reader.result.split(',')[1];
+          resolve(b64);
+        };
+        reader.readAsDataURL(zipBlob);
+      });
 
-      var res = await api.uploadSkill(formData);
+      var res = await api.uploadSkill({ archive: base64 });
       state.skills[res.skill] = { path: res.path, description: res.description };
       state.tools[res.skill] = {
         source: 'skill:' + res.skill,
