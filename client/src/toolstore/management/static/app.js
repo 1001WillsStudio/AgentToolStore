@@ -540,20 +540,27 @@ document.getElementById('form-skill').addEventListener('submit', async function 
     return;
   }
 
-  // --- Server path ---
+  // --- Server path (uses folder endpoint — works for single + multiple skills) ---
   var fd = new FormData(this);
   var payload = { path: fd.get('path').trim() };
   if (!payload.path) { toast('Please select a skill directory or upload a folder', 'error'); return; }
   try {
-    var res = await api.registerSkill(payload);
-    state.skills[res.skill] = { path: payload.path, description: res.description };
-    state.tools[res.skill] = {
-      source: 'skill:' + res.skill,
-      enabled: true,
-      exposure: 'secondary',
-      description: res.description,
-    };
-    toast('Installed: ' + esc(res.skill));
+    var res = await api.registerFolder(payload);
+    var regList = res.registered || [];
+    var failList = res.failed || [];
+    regList.forEach(function (name) {
+      state.skills[name] = { path: payload.path, description: '' };
+      state.tools['skill:' + name] = {
+        source: 'skill:' + name,
+        enabled: true,
+        exposure: 'secondary',
+        description: '',
+      };
+    });
+    var msg = 'Installed ' + regList.length + ' skill' + (regList.length !== 1 ? 's' : '');
+    if (failList.length) {
+      msg += ' (' + failList.length + ' failed: ' + failList.map(function (f) { return f.name; }).join(', ') + ')'; }
+    toast(msg, failList.length ? 'error' : 'success');
     closeModal('modal-skill');
     refreshSkills();
   } catch (err) {
