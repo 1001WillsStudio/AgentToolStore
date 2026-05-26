@@ -101,6 +101,7 @@
   <!-- Mode toggle -->
   <div style="display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--border-secondary);">
     <button id="mcp-mode-quick" class="ts-tab active" onclick="switchMcpMode('quick')" style="border-bottom:2px solid var(--accent-violet);">📋 Quick Paste</button>
+    <button id="mcp-mode-code" class="ts-tab" onclick="switchMcpMode('code')" style="border-bottom:2px solid transparent;">🐳 Run Code</button>
     <button id="mcp-mode-manual" class="ts-tab" onclick="switchMcpMode('manual')" style="border-bottom:2px solid transparent;">✏️ Manual</button>
   </div>
 
@@ -134,6 +135,54 @@
     </div>
     <div class="ts-form-actions">
       <button type="button" class="ts-btn ts-btn-primary" onclick="quickConnectMcp()">Connect All</button>
+      <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ══ Run Code ══ -->
+  <div id="mcp-code-section" class="ts-form hidden">
+    <p class="ts-form-hint">Paste Python or Node.js MCP server code. We'll build a Docker image and run it.</p>
+    <div style="display:flex;gap:12px;">
+      <label class="ts-label" style="flex:1;">
+        Language
+        <select id="mcp-code-language" onchange="mcpCodeLanguageChanged()">
+          <option value="python">Python</option>
+          <option value="node">Node.js</option>
+        </select>
+      </label>
+      <label class="ts-label" style="flex:1;">
+        Base image
+        <select id="mcp-code-image">
+          <option value="python:3.12-slim">python:3.12-slim</option>
+          <option value="python:3.11-slim">python:3.11-slim</option>
+          <option value="python:3.10-slim">python:3.10-slim</option>
+        </select>
+      </label>
+    </div>
+    <label class="ts-label">
+      Server code
+      <textarea id="mcp-code-text" rows="14" style="font-family:var(--font-mono);font-size:0.75rem;line-height:1.5;"
+        placeholder="from mcp.server import Server&#10;import asyncio&#10;&#10;server = Server(&quot;my-server&quot;)&#10;&#10;@server.list_tools()&#10;async def list_tools():&#10;    return [{"name": &quot;hello&quot;, &quot;description&quot;: &quot;Say hello&quot;, &quot;inputSchema&quot;: {}}]&#10;&#10;@server.call_tool()&#10;async def call_tool(name, args):&#10;    return [{"type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Hello!&quot;}]&#10;&#10;if __name__ == &quot;__main__&quot;:&#10;    asyncio.run(server.run(transport=&quot;stdio&quot;))"></textarea>
+    </label>
+    <label class="ts-label">
+      Server label (optional)
+      <input type="text" id="mcp-code-label" placeholder="e.g. my-gpt-server">
+    </label>
+    <div style="display:flex;gap:12px;align-items:flex-end;">
+      <label class="ts-label" style="flex:1;">
+        Default exposure
+        <select id="mcp-code-exposure">
+          <option value="secondary">Secondary (name only)</option>
+          <option value="primary">Primary (full schema)</option>
+          <option value="hidden">Hidden (search only)</option>
+        </select>
+      </label>
+      <label class="ts-checkbox ts-label">
+        <input type="checkbox" id="mcp-code-autoconnect" checked> Auto-connect
+      </label>
+    </div>
+    <div class="ts-form-actions">
+      <button type="button" class="ts-btn ts-btn-primary" onclick="runMcpCode()">🐳 Run Server</button>
       <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
     </div>
   </div>

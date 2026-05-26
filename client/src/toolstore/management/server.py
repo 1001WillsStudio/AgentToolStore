@@ -151,16 +151,22 @@ def _connect_and_discover(server_id: str, srv: dict) -> list[dict]:
         time.sleep(1.5)
         sub_transport = srv.get("sub_transport", "sse")
         url = srv.get("url", "")
+    elif transport_type == "docker":
+        sub_transport = "docker"
+        url = ""
     else:
         sub_transport = transport_type
         url = srv.get("url", "")
     client = FullMCPClient(server_id, {
+        "type": sub_transport,
         "transport": sub_transport,
         "command": srv.get("command", ""),
         "args": srv.get("args", []),
         "url": url,
         "env": srv.get("env", {}),
         "timeout": srv.get("timeout", 30),
+        "image": srv.get("image", ""),
+        "entrypoint": [srv.get("command", "python")] + srv.get("args", []),
     })
     client.connect()
     tools_info = client.list_tools()
@@ -256,7 +262,9 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._upload_skill()
                 return
             body = self._body()
-            if p == "/api/mcp/servers":
+            if p == "/api/mcp/code":
+                self._run_mcp_code(body)
+            elif p == "/api/mcp/servers":
                 self._add_mcp(body)
             elif p == "/api/skills":
                 self._register_skill(body)
@@ -725,6 +733,115 @@ class _Handler(SimpleHTTPRequestHandler):
                         if v.get("source") != prefix}
         save_config(cfg)
         self._json({"success": True})
+
+    # ── API: run code in Docker ─────────────────────────────────────────
+
+    def _run_mcp_code(self, body: dict):
+        """POST /api/mcp/code  — paste MCP server code, run in Docker."""
+        import tempfile, uuid
+        from ..docker_pool import check_docker_available, dind_socket_check
+
+        # ── validate inputs ─────────────────────────────────────────
+        code = (body.get("code") or "").strip()
+        if not code:
+            self._json({"error": "No code provided"}, 400); return
+
+        language = body.get("language", "python").lower()
+        if language not in ("python", "node"):
+            self._json({"error": f"Unsupported language: {language}. Use 'python' or 'node'."}, 400); return
+
+        image = body.get("image", "").strip() or (
+            "python:3.12-slim" if language == "python" else "node:22-slim")
+
+        server_label = body.get("server_id", "").strip()
+        if not server_label:
+            server_label = f"mcp-code-{uuid.uuid4().hex[:8]}"
+
+        # ── check Docker ────────────────────────────────────────────
+        err = dind_socket_check() or check_docker_available()
+        if err:
+            self._json({"error": err}, 500); return
+
+        # ── build Docker image from code ────────────────────────────
+        tmp = Path(tempfile.mkdtemp(prefix="toolstore-mcp-code-"))
+        try:
+            if language == "python":
+                code_file = tmp / "server.py"
+                code_file.write_text(code)
+                dockerfile = (
+                    f"FROM {image}\n"
+                    "WORKDIR /app\n"
+                    "RUN pip install --no-cache-dir mcp 2>/dev/null || true\n"
+                    "COPY server.py .\n"
+                    'CMD ["python", "server.py"]\n'
+                )
+            else:  # node
+                code_file = tmp / "server.js"
+                code_file.write_text(code)
+                dockerfile = (
+                    f"FROM {image}\n"
+                    "WORKDIR /app\n"
+                    "RUN npm install @modelcontextprotocol/sdk 2>/dev/null || true\n"
+                    "COPY server.js .\n"
+                    'CMD ["node", "server.js"]\n'
+                )
+            (tmp / "Dockerfile").write_text(dockerfile)
+
+            tag = f"toolstore-mcp-{server_label}:latest"
+            build_proc = subprocess.run(
+                ["docker", "build", "-t", tag, str(tmp)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if build_proc.returncode != 0:
+                self._json({
+                    "error": "Docker build failed",
+                    "details": build_proc.stderr[-1000:],
+                }, 500); return
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        # ── register MCP server with Docker image ───────────────────
+        cfg = load_config()
+        servers = cfg.setdefault("mcp_servers", {})
+        if server_label in servers:
+            self._json({"error": f"Server '{server_label}' already exists"}, 409); return
+
+        srv: dict = {
+            "transport": "docker",
+            "image": tag,
+            "command": "python" if language == "python" else "node",
+            "args": [f"server.{'py' if language == 'python' else 'js'}"],
+            "env": body.get("env") or {},
+            "auto_connect": body.get("auto_connect", True),
+        }
+        servers[server_label] = srv
+        save_config(cfg)
+
+        # ── attempt to discover tools ───────────────────────────────
+        tools = []
+        conn_err = None
+        if srv.get("auto_connect", True):
+            try:
+                tools = _connect_and_discover(server_label, srv)
+                for t in tools:
+                    cfg["tools"][t["name"]] = {
+                        "source": f"mcp:{server_label}",
+                        "enabled": True,
+                        "exposure": body.get("exposure_default", "secondary"),
+                        "parallel_safe": False,
+                        "subagent_safe": False,
+                        "description": t.get("description", ""),
+                    }
+                save_config(cfg)
+            except Exception as exc:
+                conn_err = str(exc)
+
+        self._json({
+            "success": True, "server_id": server_label,
+            "image": tag,
+            "tools_discovered": len(tools), "tools": tools,
+            "connection_error": conn_err,
+        })
 
     # ── API: tools ───────────────────────────────────────────────────────
 

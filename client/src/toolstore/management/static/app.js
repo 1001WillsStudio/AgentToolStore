@@ -46,6 +46,7 @@ const api = {
   registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
+  runCode(cfg)          { return this._fetch('POST', '/api/mcp/code', cfg); },
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -318,19 +319,94 @@ async function removeMcp(id) {
 
 function switchMcpMode(mode) {
   var quickBtn = document.getElementById('mcp-mode-quick');
+  var codeBtn = document.getElementById('mcp-mode-code');
   var manualBtn = document.getElementById('mcp-mode-manual');
   var quickSection = document.getElementById('mcp-quick-section');
+  var codeSection = document.getElementById('mcp-code-section');
   var manualForm = document.getElementById('form-mcp');
+
+  [quickBtn, codeBtn, manualBtn].forEach(function (b) { b.style.borderBottomColor = 'transparent'; });
+
   if (mode === 'quick') {
     quickBtn.style.borderBottomColor = 'var(--accent-violet)';
-    manualBtn.style.borderBottomColor = 'transparent';
     quickSection.classList.remove('hidden');
+    codeSection.classList.add('hidden');
+    manualForm.classList.add('hidden');
+  } else if (mode === 'code') {
+    codeBtn.style.borderBottomColor = 'var(--accent-violet)';
+    quickSection.classList.add('hidden');
+    codeSection.classList.remove('hidden');
     manualForm.classList.add('hidden');
   } else {
     manualBtn.style.borderBottomColor = 'var(--accent-violet)';
-    quickBtn.style.borderBottomColor = 'transparent';
     quickSection.classList.add('hidden');
+    codeSection.classList.add('hidden');
     manualForm.classList.remove('hidden');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Run Code — paste MCP server source, build & run in Docker
+// ═══════════════════════════════════════════════════════════════════════
+
+var PYTHON_IMAGES = ['python:3.12-slim', 'python:3.11-slim', 'python:3.10-slim'];
+var NODE_IMAGES = ['node:22-slim', 'node:20-slim'];
+
+function mcpCodeLanguageChanged() {
+  var lang = document.getElementById('mcp-code-language').value;
+  var sel = document.getElementById('mcp-code-image');
+  var images = lang === 'python' ? PYTHON_IMAGES : NODE_IMAGES;
+  sel.innerHTML = images.map(function (img) {
+    return '<option value="' + img + '">' + img + '</option>';
+  }).join('');
+  // Update placeholder to match language
+  var ta = document.getElementById('mcp-code-text');
+  if (lang === 'python') {
+    ta.placeholder = 'from mcp.server import Server\nimport asyncio\n\nserver = Server("my-server")\n\n@server.list_tools()\nasync def list_tools():\n    return [{"name": "hello", "description": "Say hello", "inputSchema": {}}]\n\n@server.call_tool()\nasync def call_tool(name, args):\n    return [{"type": "text", "text": "Hello!"}]\n\nif __name__ == "__main__":\n    asyncio.run(server.run(transport="stdio"))';
+  } else {
+    ta.placeholder = 'import { Server } from "@modelcontextprotocol/sdk/server/index.js";\nimport { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";\n\nconst server = new Server({ name: "my-server", version: "1.0.0" });\n\nserver.setRequestHandler("tools/list", async () => ({\n  tools: [{ name: "hello", description: "Say hello", inputSchema: {} }]\n}));\n\nserver.setRequestHandler("tools/call", async (req) => {\n  return { content: [{ type: "text", text: "Hello!" }] };\n});\n\nconst transport = new StdioServerTransport();\nawait server.connect(transport);';
+  }
+}
+
+async function runMcpCode() {
+  var code = document.getElementById('mcp-code-text').value.trim();
+  if (!code) { toast('Paste MCP server code first', 'error'); return; }
+
+  var language = document.getElementById('mcp-code-language').value;
+  var image = document.getElementById('mcp-code-image').value;
+  var label = document.getElementById('mcp-code-label').value.trim();
+  var exposure = document.getElementById('mcp-code-exposure').value || 'secondary';
+  var autoConnect = document.getElementById('mcp-code-autoconnect').checked;
+
+  try {
+    var res = await api.runCode({
+      code: code,
+      language: language,
+      image: image,
+      server_id: label || undefined,
+      exposure_default: exposure,
+      auto_connect: autoConnect,
+    });
+    if (res.tools) {
+      res.tools.forEach(function (t) {
+        state.tools[t.name] = {
+          source: 'mcp:' + res.server_id,
+          enabled: true,
+          exposure: exposure,
+          parallel_safe: false,
+          subagent_safe: false,
+          description: t.description || '',
+        };
+      });
+    }
+    var msg = 'Server running: ' + esc(res.server_id);
+    if (res.tools_discovered) msg += ' (' + res.tools_discovered + ' tools)';
+    if (res.connection_error) msg += ' [warn: ' + res.connection_error + ']';
+    toast(msg, res.connection_error ? 'error' : 'success');
+    closeModal('modal-mcp');
+    refreshMcp();
+  } catch (e) {
+    toast('Build failed: ' + e.message, 'error');
   }
 }
 
