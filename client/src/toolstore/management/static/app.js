@@ -513,14 +513,22 @@ document.getElementById('form-skill').addEventListener('submit', async function 
       });
 
       var res = await api.uploadSkill({ archive: base64 });
-      state.skills[res.skill] = { path: res.path, description: res.description };
-      state.tools[res.skill] = {
-        source: 'skill:' + res.skill,
-        enabled: true,
-        exposure: 'secondary',
-        description: res.description,
-      };
-      toast('Installed: ' + esc(res.skill));
+      var regList = res.registered || [];
+      var failList = res.failed || [];
+      regList.forEach(function (name) {
+        state.skills[name] = { path: '', description: '' };
+        state.tools['skill:' + name] = {
+          source: 'skill:' + name,
+          enabled: true,
+          exposure: 'secondary',
+          description: '',
+        };
+      });
+      var msg = 'Installed ' + regList.length + ' skill' + (regList.length !== 1 ? 's' : '');
+      if (failList.length) {
+        msg += ' (' + failList.length + ' failed: ' + failList.map(function (f) { return f.name; }).join(', ') + ')';
+      }
+      toast(msg, failList.length ? 'error' : 'success');
       closeModal('modal-skill');
       refreshSkills();
     } catch (err) {
