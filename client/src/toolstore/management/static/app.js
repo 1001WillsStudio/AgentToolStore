@@ -297,7 +297,6 @@ async function disconnectMcp(id) {
 }
 
 async function removeMcp(id) {
-  if (!confirm('Remove MCP server "' + id + '" and all its tools?')) return;
   try {
     await api.removeMcp(id);
     delete state.mcpServers[id];
@@ -419,27 +418,14 @@ async function refreshSkills() {
       + '<div class="ts-card-subtitle">' + esc(desc.length > 100 ? desc.slice(0,100) + '…' : desc) + '</div>'
       + '</div>'
       + '<div style="display:flex;align-items:center;gap:8px;">'
-      + (_pendingRemove === name
-        ? '<span style="display:flex;align-items:center;gap:4px;">'
-          + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeSkill(\'' + escAttr(name) + '\', true)">✓ Confirm</button>'
-          + '<button class="ts-btn ts-btn-ghost ts-btn-sm" onclick="_pendingRemove=null;refreshSkills()">✗ Cancel</button>'
-          + '</span>'
-        : '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeSkill(\'' + escAttr(name) + '\')">Remove</button>')
+      + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeSkill(\'' + escAttr(name) + '\')">Remove</button>'
       + '</div>'
       + '</div>'
       + '</div>';
   }).join('');
 }
 
-var _pendingRemove = null;
-
-async function removeSkill(name, confirmed) {
-  if (!confirmed) {
-    _pendingRemove = name;
-    refreshSkills();
-    return;
-  }
-  _pendingRemove = null;
+async function removeSkill(name) {
   try {
     await api.removeSkill(name);
     delete state.skills[name];
