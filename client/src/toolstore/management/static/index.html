@@ -164,6 +164,15 @@
     </div>
     <p class="ts-form-hint">Pick a directory that lives on the <strong>ToolStore server</strong> filesystem (inside Docker).</p>
 
+    <!-- Default exposure for installed skills -->
+    <label class="ts-label" style="margin-top:16px;">Exposure for installed tools
+      <select name="exposure_default" id="skill-exposure">
+        <option value="secondary">Secondary (name only in intro)</option>
+        <option value="primary">Primary (full schema injected)</option>
+        <option value="hidden">Hidden (search only)</option>
+      </select>
+    </label>
+
     <!-- Option B: browser-native folder picker -->
     <div class="ts-section-label" style="margin-top:16px;">Option 2 — Upload from your computer</div>
     <button type="button" class="ts-btn ts-btn-secondary" id="btn-upload-local" style="width:100%;margin-top:4px;">📂 Choose Folder from My Computer…</button>

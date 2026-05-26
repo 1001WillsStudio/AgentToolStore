@@ -513,12 +513,13 @@ document.getElementById('form-skill').addEventListener('submit', async function 
       var res = await api.uploadSkill({ archive: base64 });
       var regList = res.registered || [];
       var failList = res.failed || [];
+      var exp = (document.getElementById('skill-exposure') || {}).value || 'secondary';
       regList.forEach(function (name) {
         state.skills[name] = { path: '', description: '' };
         state.tools['skill:' + name] = {
           source: 'skill:' + name,
           enabled: true,
-          exposure: 'secondary',
+          exposure: exp,
           description: '',
         };
       });
@@ -546,12 +547,13 @@ document.getElementById('form-skill').addEventListener('submit', async function 
     var res = await api.registerFolder(payload);
     var regList = res.registered || [];
     var failList = res.failed || [];
+    var exp = (document.getElementById('skill-exposure') || {}).value || 'secondary';
     regList.forEach(function (name) {
       state.skills[name] = { path: payload.path, description: '' };
       state.tools['skill:' + name] = {
         source: 'skill:' + name,
         enabled: true,
-        exposure: 'secondary',
+        exposure: exp,
         description: '',
       };
     });
