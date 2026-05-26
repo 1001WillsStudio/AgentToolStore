@@ -228,7 +228,7 @@ function renderToolRow(name, tool) {
     + '<div class="ts-tool-desc">' + esc(tool.description || '') + '</div>'
     + '</div>'
     + '<div class="ts-tool-controls">'
-    + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)" title="Click to cycle: primary → secondary → store → disabled">' + exp + '</span>'
+    + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)" title="Click to cycle: primary → secondary → hidden">' + exp + '</span>'
     + '</div>'
     + '</div>';
 }
@@ -237,7 +237,7 @@ function renderToolRow(name, tool) {
 // Cycle exposure
 // ═══════════════════════════════════════════════════════════════════════
 
-var EXPOSURE_ORDER = ['primary', 'secondary', 'store', 'disabled'];
+var EXPOSURE_ORDER = ['primary', 'secondary', 'hidden'];
 
 async function cycleExposure(name, event) {
   var tool = state.tools[name];
@@ -658,9 +658,8 @@ async function refreshTools() {
 
   var primary = names.filter(function (n) { return state.tools[n].exposure === 'primary'; }).length;
   var secondary = names.filter(function (n) { return state.tools[n].exposure === 'secondary'; }).length;
-  var store = names.filter(function (n) { return state.tools[n].exposure === 'store'; }).length;
-  var disabled = names.filter(function (n) { return state.tools[n].exposure === 'disabled'; }).length;
-  summary.textContent = names.length + ' tools — ' + primary + ' primary, ' + secondary + ' secondary, ' + store + ' store, ' + disabled + ' disabled';
+  var hidden = names.filter(function (n) { return state.tools[n].exposure === 'hidden'; }).length;
+  summary.textContent = names.length + ' tools — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
 
   list.innerHTML = names.map(function (name) {
     var t = state.tools[name];
