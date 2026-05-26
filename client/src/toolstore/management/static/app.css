@@ -432,16 +432,19 @@ input, select, textarea { font: inherit; color: inherit; outline: none; }
 .ts-exposure-select option { background: var(--bg-secondary); }
 
 .ts-exposure-select.primary {
+  display: inline-block !important;  /* override global .hidden utility */
   background-color: rgba(139, 92, 246, 0.15);
   color: var(--accent-violet-light);
   border-color: rgba(139, 92, 246, 0.35);
 }
 .ts-exposure-select.secondary {
+  display: inline-block !important;
   background-color: rgba(245, 158, 11, 0.1);
   color: var(--accent-amber-light);
   border-color: rgba(245, 158, 11, 0.3);
 }
 .ts-exposure-select.hidden {
+  display: inline-block !important;
   background-color: rgba(108, 117, 125, 0.12);
   color: #9090a0;
   border-color: rgba(108, 117, 125, 0.3);
