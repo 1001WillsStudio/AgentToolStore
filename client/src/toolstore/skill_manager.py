@@ -376,6 +376,66 @@ class SkillManager:
         return sorted(self._skills.keys())
 
     # ------------------------------------------------------------------
+    # install — import a skill from an external path into a local skill dir
+    # ------------------------------------------------------------------
+
+    @property
+    def skill_dirs(self) -> List[Path]:
+        return list(self._skill_dirs)
+
+    def install_skill(
+        self,
+        source_path: str | Path,
+        target_base_dir: str | Path | None = None,
+    ) -> SkillDefinition | None:
+        """Install a skill from *source_path* into a local skill directory.
+
+        1. Validates that *source_path* contains a valid ``SKILL.md``.
+        2. Copies the entire directory into *target_base_dir* (defaults to
+           the first configured skill dir, or ``~/.toolstore/installed-skills``
+           when none are configured).
+        3. Adds the target base dir to ``skill_dirs`` if it is not already
+           tracked, then rescans so the new skill is immediately available.
+
+        Returns the :class:`SkillDefinition` on success, ``None`` on failure.
+        """
+        import shutil
+
+        source = Path(source_path).resolve()
+        if not source.is_dir():
+            return None
+
+        # Validate the skill before copying anything
+        sd = SkillDefinition(source)
+        if not sd.load():
+            return None
+
+        # Determine where to place the skill
+        if target_base_dir:
+            target_base = Path(target_base_dir).resolve()
+        elif self._skill_dirs:
+            target_base = self._skill_dirs[0]
+        else:
+            target_base = Path.home() / ".toolstore" / "installed-skills"
+
+        target_base.mkdir(parents=True, exist_ok=True)
+        target = target_base / sd.name
+
+        # Copy
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+
+        # Register the target base dir so future scans pick it up
+        if target_base not in self._skill_dirs:
+            self._skill_dirs.append(target_base)
+
+        # Rescan — the new skill lands in self._skills
+        self.scan()
+
+        return self._skills.get(sd.name)
+
+    # ------------------------------------------------------------------
     # ad-hoc discovery (does NOT mutate internal state)
     # ------------------------------------------------------------------
 

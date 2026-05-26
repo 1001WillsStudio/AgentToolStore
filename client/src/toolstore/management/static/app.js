@@ -19,11 +19,18 @@ let state = {
 // ═══════════════════════════════════════════════════════════════════════
 
 const api = {
-  async _fetch(method, path, body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(path, opts);
-    const data = await res.json();
+  async _fetch(method, path, body, isJson) {
+    var opts = { method };
+    if (body) {
+      if (isJson === false) {
+        opts.body = body;
+      } else {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(body);
+      }
+    }
+    var res = await fetch(path, opts);
+    var data = await res.json();
     if (!res.ok && data.error) throw new Error(data.error);
     return data;
   },
@@ -35,6 +42,8 @@ const api = {
   removeMcp(id)         { return this._fetch('DELETE', `/api/mcp/servers/${id}`); },
   listSkills()          { return this._fetch('GET', '/api/skills'); },
   registerSkill(cfg)    { return this._fetch('POST', '/api/skills', cfg); },
+  uploadSkill(formData) { return this._fetch('POST', '/api/skills/upload', formData, false); },
+  registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
 };
@@ -402,15 +411,14 @@ async function refreshSkills() {
 
   list.innerHTML = names.map(function (name) {
     var sk = state.skills[name];
-    var exp = sk.exposure || 'secondary';
+    var desc = sk.description || '';
     return '<div class="ts-card">'
       + '<div class="ts-card-header">'
       + '<div>'
       + '<div class="ts-card-title">' + esc(name) + '</div>'
-      + '<div class="ts-card-subtitle">' + esc(sk.description || '') + '</div>'
+      + '<div class="ts-card-subtitle">' + esc(desc.length > 100 ? desc.slice(0,100) + '…' : desc) + '</div>'
       + '</div>'
       + '<div style="display:flex;align-items:center;gap:8px;">'
-      + '<span class="ts-exposure ' + exp + '" onclick="cycleExposure(\'' + escAttr(name) + '\',event)">' + exp + '</span>'
       + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeSkill(\'' + escAttr(name) + '\')">Remove</button>'
       + '</div>'
       + '</div>'
@@ -431,34 +439,106 @@ async function removeSkill(name) {
   }
 }
 
+// Track which mode the user chose (server-path vs local-upload)
+var _skillUploadFiles = null;
+
 document.getElementById('btn-register-skill').addEventListener('click', function () {
   document.getElementById('form-skill').reset();
+  document.getElementById('upload-local-path').style.display = 'none';
+  document.getElementById('upload-local-path').textContent = '';
+  _skillUploadFiles = null;
   openModal('modal-skill');
+});
+
+// Option 2: trigger native folder picker
+document.getElementById('btn-upload-local').addEventListener('click', function () {
+  document.getElementById('local-skill-input').click();
+});
+
+document.getElementById('local-skill-input').addEventListener('change', function () {
+  var files = this.files;
+  if (!files || files.length === 0) return;
+  // Extract folder name from the first file's relative path
+  var firstRel = files[0].webkitRelativePath || files[0].name;
+  var folderName = firstRel.split('/')[0];
+  var label = document.getElementById('upload-local-path');
+  label.textContent = 'Selected: ' + folderName + ' (' + files.length + ' files)';
+  label.style.display = 'block';
+  _skillUploadFiles = files;
+  // Clear server path so we know to use upload
+  document.getElementById('skill-path').value = '';
 });
 
 document.getElementById('form-skill').addEventListener('submit', async function (e) {
   e.preventDefault();
+
+  // --- Local upload path ---
+  if (_skillUploadFiles && _skillUploadFiles.length > 0) {
+    var btn = document.getElementById('btn-skill-install');
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    try {
+      // Load JSZip dynamically
+      if (typeof JSZip === 'undefined') {
+        await new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+          s.onload = resolve;
+          s.onerror = function () { reject(new Error('Failed to load JSZip')); };
+          document.head.appendChild(s);
+        });
+      }
+      var zip = new JSZip();
+      var files = _skillUploadFiles;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var relPath = f.webkitRelativePath || f.name;
+        // Strip the root folder name to get relative paths inside the skill
+        var parts = relPath.split('/');
+        var innerPath = parts.slice(1).join('/');
+        if (!innerPath) continue;
+        // Read file as ArrayBuffer
+        var buf = await f.arrayBuffer();
+        zip.file(innerPath, buf);
+      }
+      var zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+      var formData = new FormData();
+      formData.append('archive', zipBlob, 'skill.zip');
+
+      var res = await api.uploadSkill(formData);
+      state.skills[res.skill] = { path: res.path, description: res.description };
+      state.tools[res.skill] = {
+        source: 'skill:' + res.skill,
+        enabled: true,
+        exposure: 'secondary',
+        description: res.description,
+      };
+      toast('Installed: ' + esc(res.skill));
+      closeModal('modal-skill');
+      refreshSkills();
+    } catch (err) {
+      toast('Upload failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Install';
+    }
+    return;
+  }
+
+  // --- Server path ---
   var fd = new FormData(this);
-  var payload = {
-    name: fd.get('name').trim(),
-    description: fd.get('description').trim(),
-    path: fd.get('path').trim(),
-    exposure: fd.get('exposure'),
-    parallel_safe: fd.get('parallel_safe') === 'on',
-    subagent_safe: fd.get('subagent_safe') === 'on',
-  };
+  var payload = { path: fd.get('path').trim() };
+  if (!payload.path) { toast('Please select a skill directory or upload a folder', 'error'); return; }
   try {
-    await api.registerSkill(payload);
-    state.skills[payload.name] = payload;
-    state.tools[payload.name] = {
-      source: 'skill:' + payload.name,
+    var res = await api.registerSkill(payload);
+    state.skills[res.skill] = { path: payload.path, description: res.description };
+    state.tools[res.skill] = {
+      source: 'skill:' + res.skill,
       enabled: true,
-      exposure: payload.exposure,
-      parallel_safe: payload.parallel_safe,
-      subagent_safe: payload.subagent_safe,
-      description: payload.description,
+      exposure: 'secondary',
+      description: res.description,
     };
-    toast('Registered: ' + esc(payload.name));
+    toast('Installed: ' + esc(res.skill));
     closeModal('modal-skill');
     refreshSkills();
   } catch (err) {
@@ -474,8 +554,15 @@ var browserTarget = null;
 
 document.getElementById('btn-browse-skill').addEventListener('click', function () {
   browserTarget = 'skill';
-  document.getElementById('browser-title').textContent = 'Browse Skill File';
+  document.getElementById('browser-title').textContent = 'Select Skill Directory';
   navigateBrowser(document.getElementById('skill-path').value || '~');
+  var btn = document.getElementById('btn-browser-select');
+  btn.textContent = 'Select Current Folder';
+  btn.onclick = function () {
+    var path = document.getElementById('browser-path').value;
+    if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
+    closeModal('modal-browser');
+  };
   openModal('modal-browser');
 });
 
@@ -502,14 +589,20 @@ async function navigateBrowser(path) {
     if (data.error) { list.innerHTML = '<div class="ts-browser-entry" style="color:var(--ts-danger);">' + esc(data.error) + '</div>'; return; }
     document.getElementById('browser-path').value = data.path;
     var html = '<div class="ts-browser-entry ts-browser-up" onclick="navigateBrowser(\'' + escAttr(data.parent) + '\')">📁 ..</div>';
+    // Skill browser: directories are selectable (a skill IS a directory).
+    var isSkill = browserTarget === 'skill' || browserTarget === 'skill-folder';
     data.entries.forEach(function (e) {
       var icon = e.type === 'directory' ? '📁' : '📄';
       var cls = e.type === 'directory' ? ' dir' : '';
       var fp = data.path + '/' + e.name;
       if (e.type === 'directory') {
-        html += '<div class="ts-browser-entry' + cls + '" onclick="navigateBrowser(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
+        // Double-click navigates; a select button lets the user pick the dir.
+        html += '<div class="ts-browser-entry' + cls + '">'
+          + '<span class="ts-browser-name" onclick="navigateBrowser(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</span>'
+          + (isSkill ? '<button class="ts-btn ts-btn-sm ts-btn-primary" style="margin-left:auto;font-size:11px;padding:2px 8px;" onclick="selectBrowserPath(\'' + escAttr(fp) + '\')">Select</button>' : '')
+          + '</div>';
       } else {
-        html += '<div class="ts-browser-entry' + cls + '" onclick="selectBrowserFile(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
+        html += '<div class="ts-browser-entry' + cls + '" onclick="selectBrowserPath(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
       }
     });
     list.innerHTML = html;
@@ -518,38 +611,12 @@ async function navigateBrowser(path) {
   }
 }
 
-function selectBrowserFile(path) {
+function selectBrowserPath(path) {
   document.getElementById('browser-path').value = path;
   if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
   closeModal('modal-browser');
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Load Skills from Folder
-// ═══════════════════════════════════════════════════════════════════════
-
-document.getElementById('btn-load-folder').addEventListener('click', function () {
-  browserTarget = 'skill-folder';
-  document.getElementById('browser-title').textContent = 'Select Skills Folder';
-  navigateBrowser('~');
-  var btn = document.getElementById('btn-browser-select');
-  btn.textContent = 'Scan This Folder';
-  btn.onclick = async function () {
-    var path = document.getElementById('browser-path').value;
-    closeModal('modal-browser');
-    try {
-      var resp = await api._fetch('POST', '/api/skills/folder', { path: path, exposure: 'secondary' });
-      var reg = resp.registered || [];
-      var fail = resp.failed || [];
-      toast('Registered: ' + (reg.join(', ') || 'none') + (fail.length ? ' | Failed: ' + fail.map(function(f){return f.name;}).join(', ') : ''));
-      state.skills = await api.listSkills();
-      refreshSkills();
-    } catch (err) {
-      toast('Failed: ' + err.message, 'error');
-    }
-  };
-  openModal('modal-browser');
-});
 
 // ═══════════════════════════════════════════════════════════════════════
 // All Tools tab

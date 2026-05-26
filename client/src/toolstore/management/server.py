@@ -36,8 +36,11 @@ from typing import Any
 
 import yaml
 
+import shutil
+
 from ..config_manager import ConfigManager
 from ..mcp_client import FullMCPClient, disconnect_all
+from ..skill_manager import SkillDefinition, SkillManager, get_skill_manager
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -234,7 +237,7 @@ class _Handler(SimpleHTTPRequestHandler):
             elif p == "/api/mcp/servers":
                 self._list_mcp()
             elif p == "/api/skills":
-                self._json(load_config().get("skills", {}))
+                self._list_skills()
             elif p == "/api/files":
                 self._list_files()
             elif p.startswith("/static/"):
@@ -246,8 +249,12 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
-        body = self._body()
         try:
+            # File-upload endpoint — multipart, not JSON
+            if p == "/api/skills/upload":
+                self._upload_skill()
+                return
+            body = self._body()
             if p == "/api/mcp/servers":
                 self._add_mcp(body)
             elif p == "/api/skills":
@@ -474,82 +481,213 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: skills folder ─────────────────────────────────────────────
 
     def _register_skill_folder(self, body: dict):
+        """Install all skills found in a folder tree.
+
+        Walks *path* recursively, finds every directory containing a
+        SKILL.md, validates each one, and copies them into the configured
+        skill directories.  This replaces the old ``*.py`` glob.
+        """
+        from ..skill_discovery import discover_skills
+
         path = body.get("path", "").strip()
         if not path:
             self._json({"error": "path is required"}, 400); return
         fp = Path(path).expanduser().resolve()
         if not fp.is_dir():
             self._json({"error": f"Not a directory: {fp}"}, 400); return
+
+        result = discover_skills(fp)
+        if result.total == 0:
+            self._json({"success": True, "registered": [],
+                        "failed": [], "message": "No SKILL.md directories found"})
+            return
+
+        cm = ConfigManager()
+        cm.load()
+        sm = get_skill_manager(cm.get_skill_dirs())
+
         registered = []
         failed = []
-        for py_file in sorted(fp.glob("*.py")):
-            name = py_file.stem
+        for ds in result.valid_skills:
             try:
-                body_single = {
-                    "name": name,
-                    "path": str(py_file),
-                    "description": body.get("description", ""),
-                    "exposure": body.get("exposure", "secondary"),
-                    "parallel_safe": body.get("parallel_safe", False),
-                    "subagent_safe": body.get("subagent_safe", False),
-                }
-                self._register_skill(body_single)
-                registered.append(name)
+                sd = sm.install_skill(ds.skill_def.skill_dir)
+                if sd:
+                    registered.append(sd.name)
+                else:
+                    failed.append({"name": ds.name,
+                                   "error": "install returned None"})
             except Exception as exc:
-                failed.append({"name": name, "error": str(exc)})
-        self._json({"success": True, "registered": registered, "failed": failed})
+                failed.append({"name": ds.name, "error": str(exc)})
+
+        # Persist skill dirs to config
+        for d in sm.skill_dirs:
+            cm.add_skill_dir(str(d))
+
+        self._json({"success": True,
+                    "registered": registered,
+                    "failed": failed,
+                    "total": result.total,
+                    "valid": result.valid_count,
+                    "invalid": result.invalid_count})
+
+    # ── API: skill upload (multipart zip from browser) ─────────────────
+
+    def _upload_skill(self):
+        """Handle browser-based skill upload (multipart/form-data zip)."""
+        import tempfile
+        import zipfile
+        import cgi
+        from io import BytesIO
+
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            self._json({"error": "Expected multipart/form-data"}, 400); return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        # Extract boundary from Content-Type
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._json({"error": "No multipart boundary"}, 400); return
+
+        # Parse multipart with cgi — prepend header line
+        fs = cgi.FieldStorage(
+            BytesIO(b"Content-Type: " + ctype.encode() + b"\r\n" + body),
+            environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
+        )
+
+        archive_field = fs.getfirst("archive") if hasattr(fs, "getfirst") else fs["archive"]
+        if not archive_field or not hasattr(archive_field, "file"):
+            self._json({"error": "No archive file uploaded"}, 400); return
+
+        zip_data = (
+            archive_field.file.read()
+            if hasattr(archive_field.file, "read")
+            else archive_field.value
+        )
+        if isinstance(zip_data, str):
+            zip_data = zip_data.encode("latin-1")
+
+        # Extract to temp dir
+        tmp = Path(tempfile.mkdtemp(prefix="toolstore-skill-"))
+        try:
+            with zipfile.ZipFile(BytesIO(zip_data)) as zf:
+                zf.extractall(tmp)
+
+            # Find SKILL.md inside the extracted tree
+            skill_md = None
+            for f in tmp.rglob("SKILL.md"):
+                if f.is_file():
+                    skill_md = f
+                    break
+
+            if not skill_md:
+                self._json({"error": "No SKILL.md found in uploaded archive"}, 400); return
+
+            skill_dir = skill_md.parent
+
+            sd = SkillDefinition(skill_dir)
+            if not sd.load():
+                self._json({"error": "Skill validation failed",
+                            "details": sd.errors}, 400); return
+
+            cm = ConfigManager()
+            cm.load()
+            sm = get_skill_manager(cm.get_skill_dirs())
+
+            installed = sm.install_skill(skill_dir)
+            if installed is None:
+                self._json({"error": "Failed to install skill"}, 500); return
+
+            for d in sm.skill_dirs:
+                cm.add_skill_dir(str(d))
+
+            self._json({"success": True,
+                        "skill": installed.name,
+                        "description": installed.description[:100],
+                        "path": str(installed.skill_dir)})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def _register_skill(self, body: dict):
-        name = body.get("name", "").strip()
-        if not name:
-            self._json({"error": "name is required"}, 400); return
+        """Install a single skill from a directory containing SKILL.md.
 
+        Validates the directory, copies it into the configured skill dirs,
+        and rescans so it is immediately available.
+        """
         path = body.get("path", "").strip()
         if not path:
             self._json({"error": "path is required"}, 400); return
 
-        # Expand ~ to user home
         skill_path = Path(path).expanduser().resolve()
-        if not skill_path.exists():
-            self._json({"error": f"File not found: {skill_path}"}, 404); return
-        if not skill_path.is_file():
-            self._json({"error": f"Not a file: {skill_path}"}, 400); return
+        if not skill_path.is_dir():
+            self._json({"error": f"Not a directory: {skill_path}"}, 400); return
 
-        # Read the existing skill file (validates it exists and is readable)
-        try:
-            code = skill_path.read_text()
-        except OSError as exc:
-            self._json({"error": f"Cannot read file: {exc}"}, 400); return
+        # Validate SKILL.md exists and is well-formed
+        sd = SkillDefinition(skill_path)
+        if not sd.load():
+            self._json({"error": "Skill validation failed",
+                        "details": sd.errors}, 400); return
 
-        cfg = load_config()
-        entry = {
-            "description": body.get("description", ""),
-            "path": str(skill_path),
-            "enabled": True,
-            "exposure": body.get("exposure", "secondary"),
-            "parallel_safe": body.get("parallel_safe", False),
-            "subagent_safe": body.get("subagent_safe", False),
-        }
-        cfg.setdefault("skills", {})[name] = entry
+        cm = ConfigManager()
+        cm.load()
+        sm = get_skill_manager(cm.get_skill_dirs())
 
-        cfg["tools"][name] = {
-            "source": f"skill:{name}",
-            "enabled": True,
-            "exposure": entry["exposure"],
-            "parallel_safe": entry["parallel_safe"],
-            "subagent_safe": entry["subagent_safe"],
-            "description": entry["description"],
-        }
+        installed = sm.install_skill(skill_path)
+        if installed is None:
+            self._json({"error": "Failed to install skill"}, 500); return
 
-        save_config(cfg)
-        self._json({"success": True, "skill": name, "path": str(skill_path)})
+        # Persist skill dirs to config
+        for d in sm.skill_dirs:
+            cm.add_skill_dir(str(d))
+
+        self._json({"success": True,
+                    "skill": installed.name,
+                    "description": installed.description[:100],
+                    "path": str(skill_path)})
+
+    def _list_skills(self):
+        """Return skills from SkillManager (not the old config.yaml dict)."""
+        cm = ConfigManager()
+        cm.load()
+        sm = get_skill_manager(cm.get_skill_dirs())
+        sm.scan()
+        result = {}
+        for name, sd in sm._skills.items():
+            result[name] = {
+                "description": sd.description,
+                "path": str(sd.skill_dir),
+                "license": sd.license,
+            }
+        self._json(result)
 
     def _remove_skill(self, name: str):
-        cfg = load_config()
-        if name not in cfg.get("skills", {}):
+        """Remove a skill from the local filesystem."""
+        cm = ConfigManager()
+        cm.load()
+        sm = get_skill_manager(cm.get_skill_dirs())
+        sm.scan()
+
+        sd = sm.get_skill(name)
+        if not sd:
             self._json({"error": "Skill not found"}, 404); return
 
-        del cfg["skills"][name]
+        # Remove skill directory from disk
+        skill_dir = sd.skill_dir
+        if skill_dir.exists():
+            shutil.rmtree(skill_dir, ignore_errors=True)
+
+        # Remove from in-memory index
+        sm._skills.pop(name, None)
+
+        # Remove from config.yaml tools
+        cfg = load_config()
         prefix = f"skill:{name}"
         cfg["tools"] = {k: v for k, v in cfg.get("tools", {}).items()
                         if v.get("source") != prefix}

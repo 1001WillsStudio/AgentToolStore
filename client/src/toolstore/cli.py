@@ -542,6 +542,43 @@ def skill_validate(
             console.print(f"  [red]{err}[/red]")
 
 
+@skill_app.command("install")
+def skill_install(
+    path: str = typer.Argument(..., help="Path to skill directory (containing SKILL.md)"),
+    target: str = typer.Option(None, "--target", "-t",
+                                help="Target directory to install into (defaults to first configured skill dir)"),
+):
+    """Install a skill from a local directory into the ToolStore.
+
+    Copies the skill into a configured skill directory, registers it,
+    and rescans so it is immediately available to agents.
+
+    Example:
+        toolstore skill install ./my-skill
+        toolstore skill install ~/skills/web-search --target /workspace/skills-uploaded
+    """
+    sm = get_skill_manager(config_manager.get_skill_dirs())
+
+    sd = sm.install_skill(path, target)
+    if sd is None:
+        console.print(f"[red]Failed to install skill from {path}[/red]")
+        console.print("Make sure the directory contains a valid SKILL.md file.")
+        raise typer.Exit(1)
+
+    # Persist skill dirs to config
+    for d in sm.skill_dirs:
+        config_manager.add_skill_dir(str(d))
+
+    # Update index
+    index_manager.update_from_remote(sm.to_tool_definitions())
+
+    console.print(f"[green]✓ Installed skill:[/green] {sd.name}")
+    console.print(f"  Description: {sd.description[:100]}")
+    files = sd.list_files()
+    if files:
+        console.print(f"  Bundled files: {len(files)}")
+
+
 @skill_app.command("discover")
 def skill_discover(
     path: str = typer.Argument(..., help="Root path to scan for skills"),
