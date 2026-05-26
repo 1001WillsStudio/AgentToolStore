@@ -97,7 +97,49 @@
     <h3>🔌 Connect to MCP Server</h3>
     <button class="ts-modal-close" data-close="modal-mcp">&times;</button>
   </div>
-  <form id="form-mcp" class="ts-form">
+
+  <!-- Mode toggle -->
+  <div style="display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--border-secondary);">
+    <button id="mcp-mode-quick" class="ts-tab active" onclick="switchMcpMode('quick')" style="border-bottom:2px solid var(--accent-violet);">📋 Quick Paste</button>
+    <button id="mcp-mode-manual" class="ts-tab" onclick="switchMcpMode('manual')" style="border-bottom:2px solid transparent;">✏️ Manual</button>
+  </div>
+
+  <!-- ══ Quick Paste ══ -->
+  <div id="mcp-quick-section" class="ts-form">
+    <label class="ts-label">
+      Paste MCP server config (Claude Desktop / mcp.json format)
+      <textarea id="mcp-paste-json" rows="10" style="font-family:var(--font-mono);font-size:0.8125rem;"
+        placeholder='{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_..." }
+    }
+  }
+}'></textarea>
+    </label>
+    <div style="display:flex;gap:12px;align-items:flex-end;">
+      <label class="ts-label" style="flex:1;">
+        Default exposure
+        <select id="mcp-paste-exposure">
+          <option value="secondary">Secondary (name only)</option>
+          <option value="primary">Primary (full schema)</option>
+          <option value="hidden">Hidden (search only)</option>
+        </select>
+      </label>
+      <label class="ts-checkbox ts-label">
+        <input type="checkbox" id="mcp-paste-autoconnect" checked> Auto-connect
+      </label>
+    </div>
+    <div class="ts-form-actions">
+      <button type="button" class="ts-btn ts-btn-primary" onclick="quickConnectMcp()">Connect All</button>
+      <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ══ Manual ══ -->
+  <form id="form-mcp" class="ts-form hidden">
     <p class="ts-form-hint">Connect to an already-running MCP server. The server must be running before you connect.</p>
     <label class="ts-label">Server label <input name="server_id" required placeholder="e.g. github-prod"></label>
     <label class="ts-label">Transport

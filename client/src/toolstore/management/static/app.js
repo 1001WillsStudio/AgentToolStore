@@ -313,13 +313,153 @@ async function removeMcp(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Connect to MCP form
+// MCP mode toggle (Quick Paste / Manual)
+// ═══════════════════════════════════════════════════════════════════════
+
+function switchMcpMode(mode) {
+  var quickBtn = document.getElementById('mcp-mode-quick');
+  var manualBtn = document.getElementById('mcp-mode-manual');
+  var quickSection = document.getElementById('mcp-quick-section');
+  var manualForm = document.getElementById('form-mcp');
+  if (mode === 'quick') {
+    quickBtn.style.borderBottomColor = 'var(--accent-violet)';
+    manualBtn.style.borderBottomColor = 'transparent';
+    quickSection.classList.remove('hidden');
+    manualForm.classList.add('hidden');
+  } else {
+    manualBtn.style.borderBottomColor = 'var(--accent-violet)';
+    quickBtn.style.borderBottomColor = 'transparent';
+    quickSection.classList.add('hidden');
+    manualForm.classList.remove('hidden');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Quick Paste — parse standard MCP config JSON
+// ═══════════════════════════════════════════════════════════════════════
+
+function parseMcpServersJson(text) {
+  var parsed;
+  try { parsed = JSON.parse(text); } catch (e) { return { error: 'Invalid JSON: ' + e.message, servers: [] }; }
+
+  var servers = [];
+
+  // Shape A: { "mcpServers": { "name": {...}, ... } }  (Claude Desktop)
+  if (parsed.mcpServers && typeof parsed.mcpServers === 'object') {
+    Object.keys(parsed.mcpServers).forEach(function (name) {
+      var cfg = parsed.mcpServers[name];
+      if (cfg && typeof cfg === 'object') servers.push(normalizeMcpServer(name, cfg));
+    });
+  }
+  // Shape B: { "name": { "command":... }, ... }  (flat dict)
+  else if (!parsed.command && !parsed.url) {
+    Object.keys(parsed).forEach(function (name) {
+      var cfg = parsed[name];
+      if (cfg && typeof cfg === 'object' && (cfg.command || cfg.url)) {
+        servers.push(normalizeMcpServer(name, cfg));
+      }
+    });
+  }
+  // Shape C: single server  { "command":"...", "args":[...] }
+  else if (parsed.command || parsed.url) {
+    servers.push(normalizeMcpServer('mcp-server', parsed));
+  }
+
+  if (servers.length === 0) {
+    return { error: 'No MCP server configs found. Paste a Claude Desktop config or mcp.json block.', servers: [] };
+  }
+  return { error: null, servers: servers };
+}
+
+function normalizeMcpServer(name, cfg) {
+  // Detect transport
+  var transport = cfg.transport || cfg.type || (cfg.url && !cfg.command ? 'sse' : 'stdio');
+  // Normalise env: may be object or array of strings
+  var env = cfg.env || {};
+  if (Array.isArray(env)) {
+    var envObj = {};
+    env.forEach(function (line) {
+      var parts = String(line).split('=');
+      if (parts.length >= 2) envObj[parts[0].trim()] = parts.slice(1).join('=').trim();
+    });
+    env = envObj;
+  }
+  return {
+    name: name,
+    transport: transport,
+    command: cfg.command || '',
+    args: Array.isArray(cfg.args) ? cfg.args : (cfg.args ? String(cfg.args).split(/\s+/) : []),
+    env: env,
+    url: cfg.url || '',
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Quick Paste — connect all parsed servers
+// ═══════════════════════════════════════════════════════════════════════
+
+async function quickConnectMcp() {
+  var text = document.getElementById('mcp-paste-json').value.trim();
+  if (!text) { toast('Paste a JSON config first', 'error'); return; }
+
+  var result = parseMcpServersJson(text);
+  if (result.error) { toast(result.error, 'error'); return; }
+
+  var exposure = document.getElementById('mcp-paste-exposure').value || 'secondary';
+  var autoConnect = document.getElementById('mcp-paste-autoconnect').checked;
+
+  var ok = 0, fail = 0;
+  for (var i = 0; i < result.servers.length; i++) {
+    var s = result.servers[i];
+    try {
+      var res = await api.addMcp({
+        server_id: s.name,
+        transport: s.transport,
+        command: s.command,
+        args: s.args,
+        env: s.env,
+        url: s.url,
+        folder: '',
+        sub_transport: '',
+        exposure_default: exposure,
+        auto_connect: autoConnect,
+      });
+      if (res.tools) {
+        res.tools.forEach(function (t) {
+          state.tools[t.name] = {
+            source: 'mcp:' + res.server_id,
+            enabled: true,
+            exposure: exposure,
+            parallel_safe: false,
+            subagent_safe: false,
+            description: t.description || '',
+          };
+        });
+      }
+      ok++;
+    } catch (e) {
+      fail++;
+      console.error('Failed to add ' + s.name, e);
+    }
+  }
+
+  var msg = 'Connected ' + ok + ' server' + (ok !== 1 ? 's' : '');
+  if (fail) msg += ' (' + fail + ' failed)';
+  toast(msg, fail ? 'error' : 'success');
+  closeModal('modal-mcp');
+  refreshMcp();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Connect to MCP form (manual)
 // ═══════════════════════════════════════════════════════════════════════
 
 document.getElementById('btn-connect-mcp').addEventListener('click', function () {
   document.getElementById('form-mcp').reset();
   document.getElementById('mcp-transport').value = 'sse';
   showMcpFields('sse');
+  document.getElementById('mcp-paste-json').value = '';
+  switchMcpMode('quick');
   openModal('modal-mcp');
 });
 
