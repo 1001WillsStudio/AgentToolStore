@@ -234,6 +234,8 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._serve_spa()
             elif p == "/api/config":
                 self._json(load_config())
+            elif p.startswith("/api/tools"):
+                self._list_tools()
             elif p == "/api/mcp/servers":
                 self._list_mcp()
             elif p == "/api/skills":
@@ -719,6 +721,11 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json({"success": True})
 
     # ── API: tools ───────────────────────────────────────────────────────
+
+    def _list_tools(self):
+        """GET /api/tools  — return every registered tool from config."""
+        cfg = load_config()
+        self._json(cfg.get("tools", {}))
 
     def _patch_tool(self, name: str, body: dict):
         cfg = load_config()
