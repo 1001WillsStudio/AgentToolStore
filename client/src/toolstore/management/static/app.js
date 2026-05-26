@@ -222,8 +222,10 @@ function renderMcpCard(id, srv) {
 
 function renderToolRow(name, tool) {
   var exp = tool.exposure || 'secondary';
+  var optColors = { primary: '#a78bfa', secondary: '#fbbf24', hidden: '#9090a0' };
   var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
-    return '<option value="' + v + '"' + (v === exp ? ' selected' : '') + '>' + v + '</option>';
+    var sel = v === exp ? ' selected' : '';
+    return '<option value="' + v + '" style="color:' + optColors[v] + '"' + sel + '>' + v + '</option>';
   }).join('');
   return '<div class="ts-tool-row">'
     + '<div class="ts-tool-info">'

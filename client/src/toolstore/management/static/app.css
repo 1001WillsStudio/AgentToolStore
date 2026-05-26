@@ -420,6 +420,8 @@ input, select, textarea { font: inherit; color: inherit; outline: none; }
   font-weight: 600; font-family: var(--font-sans);
   text-transform: uppercase; letter-spacing: 0.03em;
   cursor: pointer; border: 1px solid transparent;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   transition: all var(--transition-fast);
   -webkit-appearance: none; appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23a0a0b8'/%3E%3C/svg%3E");
@@ -427,21 +429,22 @@ input, select, textarea { font: inherit; color: inherit; outline: none; }
   padding-right: 22px;
 }
 .ts-exposure-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3); }
+.ts-exposure-select option { background: var(--bg-secondary); }
 
 .ts-exposure-select.primary {
-  background: rgba(139, 92, 246, 0.15);
+  background-color: rgba(139, 92, 246, 0.15);
   color: var(--accent-violet-light);
   border-color: rgba(139, 92, 246, 0.35);
 }
 .ts-exposure-select.secondary {
-  background: rgba(245, 158, 11, 0.1);
+  background-color: rgba(245, 158, 11, 0.1);
   color: var(--accent-amber-light);
   border-color: rgba(245, 158, 11, 0.3);
 }
 .ts-exposure-select.hidden {
-  background: rgba(108, 117, 125, 0.1);
-  color: var(--text-tertiary);
-  border-color: rgba(108, 117, 125, 0.25);
+  background-color: rgba(108, 117, 125, 0.12);
+  color: #9090a0;
+  border-color: rgba(108, 117, 125, 0.3);
 }
 
 /* ==========================================================================
