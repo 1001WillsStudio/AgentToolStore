@@ -525,16 +525,18 @@ class _Handler(SimpleHTTPRequestHandler):
             cm.add_skill_dir(str(d))
 
         # Register each installed skill as a tool (survives page refresh)
+        cfg = load_config()
+        cfg.setdefault("tools", {})
         for name in registered:
-            cm.add_tool(
-                tool_name=f"skill:{name}",
-                source=f"skill:{name}",
-                enabled=True,
-                exposure="secondary",
-                parallel_safe=False,
-                subagent_safe=False,
-                description="",
-            )
+            cfg["tools"][f"skill:{name}"] = {
+                "source": f"skill:{name}",
+                "enabled": True,
+                "exposure": "secondary",
+                "parallel_safe": False,
+                "subagent_safe": False,
+                "description": "",
+            }
+        save_config(cfg)
 
         self._json({"success": True,
                     "registered": registered,
@@ -608,16 +610,18 @@ class _Handler(SimpleHTTPRequestHandler):
 
             # Register each installed skill as a tool so it survives page
             # refresh and can be patched (exposure, …) afterwards.
+            cfg2 = load_config()
+            cfg2.setdefault("tools", {})
             for name in registered:
-                cm.add_tool(
-                    tool_name=f"skill:{name}",
-                    source=f"skill:{name}",
-                    enabled=True,
-                    exposure="secondary",
-                    parallel_safe=False,
-                    subagent_safe=False,
-                    description="",
-                )
+                cfg2["tools"][f"skill:{name}"] = {
+                    "source": f"skill:{name}",
+                    "enabled": True,
+                    "exposure": "secondary",
+                    "parallel_safe": False,
+                    "subagent_safe": False,
+                    "description": "",
+                }
+            save_config(cfg2)
 
             self._json({"success": True,
                         "registered": registered,
@@ -663,15 +667,17 @@ class _Handler(SimpleHTTPRequestHandler):
             cm.add_skill_dir(str(d))
 
         # Register as a tool so it survives page refresh
-        cm.add_tool(
-            tool_name=f"skill:{installed.name}",
-            source=f"skill:{installed.name}",
-            enabled=True,
-            exposure="secondary",
-            parallel_safe=False,
-            subagent_safe=False,
-            description="",
-        )
+        cfg = load_config()
+        cfg.setdefault("tools", {})
+        cfg["tools"][f"skill:{installed.name}"] = {
+            "source": f"skill:{installed.name}",
+            "enabled": True,
+            "exposure": "secondary",
+            "parallel_safe": False,
+            "subagent_safe": False,
+            "description": "",
+        }
+        save_config(cfg)
 
         self._json({"success": True,
                     "skill": installed.name,
