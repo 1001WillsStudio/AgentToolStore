@@ -858,9 +858,35 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: tools ───────────────────────────────────────────────────────
 
     def _list_tools(self):
-        """GET /api/tools  — return every registered tool from config."""
+        """GET /api/tools  — return every registered tool.
+
+        Merges three sources:
+          1. Tools from ``config.json`` (MCP-connected tools)
+          2. Tools from ``index.json`` (registry download via ``toolstore update``)
+        """
         cfg = load_config()
-        self._json(cfg.get("tools", {}))
+        tools = dict(cfg.get("tools", {}))
+
+        # Merge registry tools from index.json (respects TOOLSTORE_HOME)
+        cm = _config_manager()
+        index_path = cm.config_dir / "index.json"
+        if index_path.exists():
+            try:
+                data = json.loads(index_path.read_text())
+                for name, tdef in data.get("tools", {}).items():
+                    if name not in tools:
+                        tools[name] = {
+                            "source": tdef.get("source", "registry"),
+                            "enabled": True,
+                            "exposure": "primary",
+                            "parallel_safe": False,
+                            "subagent_safe": False,
+                            "description": tdef.get("description", ""),
+                        }
+            except Exception:
+                pass
+
+        self._json(tools)
 
     def _patch_tool(self, name: str, body: dict):
         cfg = load_config()
