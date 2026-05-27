@@ -74,8 +74,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), ses
 @app.get("/index.json")
 def get_index(session: Session = Depends(get_session)):
     """
-    Returns the full list of tools in the simplified JSON format
-    expected by the CLI client. Skills include 'body' for progressive disclosure.
+    Returns the full list of published toolsets in JSON format.
     """
     tools = session.exec(select(Tool)).all()
     
@@ -86,19 +85,20 @@ def get_index(session: Session = Depends(get_session)):
         tool_data["description"] = tool.description
         tool_data["type"] = tool.type
         tool_data["owner"] = tool.owner.username if tool.owner else "unknown"
-        # Include docker fields for docker-type tools
-        if tool.type == "docker":
+        # Include toolset fields for toolset-type tools
+        if tool.type == "toolset":
             if tool.docker_image:
                 tool_data["docker_image"] = tool.docker_image
             if tool.code:
                 tool_data["code"] = tool.code
             if tool.code_base64:
                 tool_data["code_base64"] = tool.code_base64
-        # Include body for skills (progressive disclosure)
-        if tool.type == "skill" and tool.body:
-            tool_data["body"] = tool.body
-        if tool.type == "skill" and tool.skill_files:
-            tool_data["skill_files"] = tool.skill_files
+            if tool.doc:
+                tool_data["doc"] = tool.doc
+            if tool.env_vars:
+                tool_data["env_vars"] = tool.env_vars
+            if tool.requirements:
+                tool_data["requirements"] = tool.requirements
         index_list.append(tool_data)
         
     return index_list
@@ -110,42 +110,32 @@ def publish_tool(
     session: Session = Depends(get_session)
 ):
     """
-    Authenticated endpoint to publish a tool (api, mcp, or skill).
-    For skills, include 'body' (SKILL.md body text) and optional
-    'skill_files' ({filename: content} dict).
-    For docker, include 'docker_image' (optional custom image), 'code'
-    (the executable Python code), and optional 'code_base64'.
+    Authenticated endpoint to publish a toolset.
+    Include 'doc' (doc.md), 'code' (toolset.py),
+    optional 'docker_image', 'env_vars', 'requirements'.
     """
     name = tool_def.get("name")
     if not name:
         raise HTTPException(status_code=400, detail="Tool name required")
 
-    tool_type = tool_def.get("type", "api")
-    if tool_type not in ("api", "mcp", "skill", "docker"):
-        raise HTTPException(status_code=400, detail=f"Invalid type: {tool_type}. Must be 'api', 'mcp', 'skill', or 'docker'")
+    tool_type = "toolset"
         
     # Check if exists
     existing = session.exec(select(Tool).where(Tool.name == name)).first()
     if existing:
-        # Only owner can update
         if existing.owner_id != current_user.id:
             raise HTTPException(status_code=403, detail="You do not own this tool")
-        
-        # Update existing
         existing.definition = tool_def
         existing.version = tool_def.get("version", existing.version)
         existing.description = tool_def.get("description", existing.description)
         existing.type = tool_type
         existing.updated_at = datetime.utcnow()
-        # Handle skill-specific fields
-        if tool_type == "skill":
-            existing.body = tool_def.get("body")
-            existing.skill_files = tool_def.get("skill_files")
-        # Handle docker-specific fields
-        if tool_type == "docker":
-            existing.docker_image = tool_def.get("docker_image")
-            existing.code = tool_def.get("code")
-            existing.code_base64 = tool_def.get("code_base64")
+        existing.docker_image = tool_def.get("docker_image")
+        existing.code = tool_def.get("code")
+        existing.code_base64 = tool_def.get("code_base64")
+        existing.doc = tool_def.get("doc")
+        existing.env_vars = tool_def.get("env_vars")
+        existing.requirements = tool_def.get("requirements")
         session.add(existing)
         session.commit()
         return {"success": True, "tool": name, "action": "updated"}
@@ -154,21 +144,20 @@ def publish_tool(
     tool = Tool(
         name=name,
         version=tool_def.get("version", "1.0.0"),
-        type=tool_type,
+        type="toolset",
         description=tool_def.get("description", ""),
         definition=tool_def,
-        body=tool_def.get("body") if tool_type == "skill" else None,
-        skill_files=tool_def.get("skill_files") if tool_type == "skill" else None,
-        docker_image=tool_def.get("docker_image") if tool_type == "docker" else None,
-        code=tool_def.get("code") if tool_type == "docker" else None,
-        code_base64=tool_def.get("code_base64") if tool_type == "docker" else None,
+        docker_image=tool_def.get("docker_image"),
+        code=tool_def.get("code"),
+        code_base64=tool_def.get("code_base64"),
+        doc=tool_def.get("doc"),
+        env_vars=tool_def.get("env_vars"),
+        requirements=tool_def.get("requirements"),
         owner_id=current_user.id
     )
-    
     session.add(tool)
     session.commit()
     session.refresh(tool)
-    
     return {"success": True, "tool": tool.name, "action": "created"}
 
 @app.delete("/tools/{name}")

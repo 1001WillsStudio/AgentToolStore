@@ -1,11 +1,11 @@
 """
-ToolStore native tool — the Python entry point that AuroraCoder (and other agents)
-call to search, inspect, and execute ToolStore tools.
+ToolStore native tool — the Python entry point that agents call to search,
+inspect, and execute ToolStore tools.
 
 Supports three tool types:
-- api:  HTTP GET/POST to public APIs
-- mcp:  Full MCP protocol via persistent connection pool
-- skill: SKILL.md-based agent skills (load, list files, read file)
+- mcp:     External MCP servers (client-managed, established protocol)
+- skill:   SKILL.md-based agent skills (client-managed, established format)
+- toolset: Agent-centric managed tools — 1 doc + 1 code, @tool bindings
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ def _do_search(query: str) -> str:
 
     lines: List[str] = [f"Found {len(results)} tools:"]
     for tool in results:
-        ttype = tool.get("type", "api")
+        ttype = tool.get("type", "unknown")
         desc = tool.get("description", "No description")
         lines.append(f"- {tool['name']} ({ttype}): {desc}")
     return "\n".join(lines)
@@ -180,52 +180,16 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
     if not tool:
         return f"Error: Tool '{tool_name}' not found."
 
-    tool_type = tool.get("type", "api")
+    tool_type = tool.get("type", "unknown")
 
-    if tool_type == "api":
-        return _execute_api(tool, args)
-    elif tool_type == "mcp":
+    if tool_type == "mcp":
         return _execute_mcp(tool, args)
     elif tool_type == "skill":
         return _execute_skill(tool, args)
-    elif tool_type == "docker":
-        return _execute_docker(tool, args)
+    elif tool_type == "toolset":
+        return _execute_toolset(tool, args)
     else:
         return f"Error: Unknown tool type '{tool_type}'"
-
-# ---------------------------------------------------------------------------
-# API execution
-# ---------------------------------------------------------------------------
-
-def _execute_api(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    import httpx
-
-    url = tool["endpoint"]
-    method = tool.get("method", "GET").upper()
-
-    # Path-parameter substitution
-    final_url = url
-    for k, v in args.items():
-        if f"{{{k}}}" in final_url:
-            final_url = final_url.replace(f"{{{k}}}", str(v))
-
-    # Remaining params become query/body
-    request_params = {k: v for k, v in args.items()
-                      if f"{{{k}}}" not in url}
-
-    try:
-        if method == "GET":
-            response = httpx.get(final_url, params=request_params, timeout=30.0)
-        else:
-            response = httpx.request(method, final_url,
-                                     json=request_params, timeout=30.0)
-        try:
-            return json.dumps(response.json(), indent=2)
-        except Exception:
-            return response.text
-    except Exception as req_err:
-        return f"Error executing API tool: {str(req_err)}"
-
 
 # ---------------------------------------------------------------------------
 # MCP execution (via FullMCPClient + connection pool)
@@ -299,59 +263,109 @@ def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         return f"Error: Unknown skill action '{skill_action}'. Use 'load', 'files', or 'file'."
 
 
-
-
 # ---------------------------------------------------------------------------
-# Docker execution  (single shared warm worker — same container for all tools)
+# Toolset execution
 # ---------------------------------------------------------------------------
 
-def _execute_docker(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    """Run a *docker*-type tool in the single shared warm worker.
+def _execute_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
+    """Execute a toolset.
 
-    The module code is loaded once (keyed by a hash of the code string) and
-    the named function is called with the provided arguments.  Multiple tools
-    that share the same code module reuse the same loaded namespace.
+    Two modes:
+    - **Local** (has ``toolset_dir``): import + call directly in-process.
+      No Docker, no sandbox — the toolset is installed on the host.
+    - **Remote** (has ``code``, no ``toolset_dir``): run in a dedicated
+      ephemeral Docker container with the toolset's pre-configured
+      environment.  Zero approval required.
+
+    The agent passes ``{"function": "...", ...}`` in arguments.
     """
-    import base64
-    import hashlib
-    from toolstore import docker_pool
+    # Take a copy so we don't mutate the caller's dict.
+    args = dict(args)
 
-    # 1. Check Docker availability
-    docker_err = docker_pool.check_docker_available()
-    if docker_err:
-        return f"Error: {docker_err}"
+    # 1. Argument validation — which function?
+    function_name = args.pop("function", None)
+    if not function_name:
+        bindings = tool.get("bindings", {})
+        if len(bindings) == 1:
+            function_name = next(iter(bindings))
+        else:
+            names = list(bindings.keys()) if bindings else []
+            return (
+                f"Error: 'function' argument required. "
+                f"Available functions: {', '.join(names) or '(none)'}"
+            )
 
-    # 1b. DinD socket check
-    socket_err = docker_pool.dind_socket_check()
-    if socket_err:
-        return socket_err
+    # 2. Validate the binding exists
+    bindings = tool.get("bindings", {})
+    if function_name not in bindings:
+        names = list(bindings.keys())
+        return (
+            f"Error: Unknown function '{function_name}'. "
+            f"Available: {', '.join(names)}"
+        )
 
-    # 2. Decode the code
-    code = tool.get("code") or ""
-    if tool.get("code_base64"):
-        try:
-            code = base64.b64decode(tool["code_base64"]).decode("utf-8")
-        except Exception as exc:
-            return f"Error: Failed to decode base64 code: {exc}"
+    # 3. Dispatch: local (in-process) vs remote (dedicated container)
+    toolset_dir = tool.get("toolset_dir")
+    if toolset_dir:
+        return _execute_toolset_local(toolset_dir, function_name, args)
 
-    if not code.strip():
-        return "Error: Docker tool has no code to execute."
+    code = tool.get("code") or tool.get("code_base64")
+    if code:
+        return _execute_toolset_remote(tool, function_name, args)
 
-    # 3. Derive a stable module name from the code hash so that tools
-    #    that share identical code reuse the loaded namespace.
-    module_name = "m_" + hashlib.sha256(code.encode()).hexdigest()[:12]
+    return "Error: toolset has neither 'toolset_dir' nor 'code' — cannot execute"
 
-    # 4. The function to call — either declared in the tool definition or
-    #    defaults to "main" by convention.
-    function = tool.get("function", "main")
 
-    # 5. Load the module (no-op if already loaded) and call the function.
-    timeout_s = tool.get("timeout", 30)
-    worker = docker_pool.get_worker()
+def _execute_toolset_local(toolset_dir: str, function_name: str,
+                           args: Dict[str, Any]) -> str:
+    """Run a local toolset directly in-process — just import and call."""
+    import importlib.util
+    from pathlib import Path
 
-    load_err = worker.load_module(module_name, code)
-    if load_err:
-        return f"Error loading module: {load_err}"
+    from toolstore.toolset import clear_registry, get_tool
 
-    return worker.call_function(module_name, function, args, timeout_s)
+    code_path = Path(toolset_dir) / "toolset.py"
+    if not code_path.exists():
+        return f"Error: toolset.py not found at {code_path}"
+
+    try:
+        clear_registry()
+
+        # Dynamically load the toolset module
+        spec = importlib.util.spec_from_file_location(
+            "toolset_local", str(code_path)
+        )
+        if spec is None or spec.loader is None:
+            return "Error: failed to create module spec for toolset.py"
+
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        fn = get_tool(function_name)
+        if fn is None:
+            from toolstore.toolset import get_tool_names
+            names = get_tool_names()
+            return (
+                f"Error: Function '{function_name}' not found in toolset. "
+                f"Available: {', '.join(names) or '(none)'}"
+            )
+
+        result = fn(**args)
+        clear_registry()
+
+        import json as _json
+        return _json.dumps(result, default=str, indent=2)
+    except Exception as exc:
+        clear_registry()
+        return f"Error executing local toolset '{function_name}': {exc}"
+
+
+def _execute_toolset_remote(tool: Dict[str, Any], function_name: str,
+                            args: Dict[str, Any]) -> str:
+    """Run a remote (registry) toolset in a dedicated ephemeral Docker
+    container with its pre-configured environment."""
+    from toolstore.remote_runner import RemoteRunner
+
+    runner = RemoteRunner(tool)
+    return runner.run(function_name, args, tool.get("timeout", 30))
 

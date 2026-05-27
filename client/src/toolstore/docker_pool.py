@@ -3,9 +3,9 @@ Docker container management for ToolStore.
 
 Two separate container models:
 
-1.  **Single shared worker** — one persistent Python worker for ALL docker-type
-    tools.  The container starts once and stays alive forever.  Code is piped
-    in/out per invocation via newline-delimited JSON.
+1.  **Single shared worker** — one persistent Python worker for ALL toolset
+    executions.  The container starts once and stays alive forever.  Toolset
+    code is piped in/out per invocation via newline-delimited JSON.
 
 2.  **MCP-server containers** — one container per MCP server (started by
     ``DockerTransport`` in ``transport.py``).  JSON-RPC over stdin/stdout.
@@ -154,14 +154,14 @@ def dind_socket_check() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# WarmContainer — the single shared Python worker for all docker-type tools
+# WarmContainer — the single shared Python worker for all toolset executions
 # ---------------------------------------------------------------------------
 
 
 class WarmContainer:
-    """The single persistent Docker container that runs ALL docker-type tools.
+    """The single persistent Docker container that runs ALL toolset executions.
 
-    Started once (lazily, on first use) and kept alive forever.  Code
+    Started once (lazily, on first use) and kept alive forever.  Toolset
     modules are loaded once and cached in the worker; subsequent calls
     invoke named functions from those modules.
     """

@@ -29,6 +29,7 @@ class ConfigManager:
             "registry_url": "http://localhost:8000/index.json",
             "mcpServers": {},
             "skill_dirs": [],
+            "toolset_dirs": [],
             "server": {
                 "enabled": False,
                 "mode": "stdio",  # stdio or sse
@@ -36,8 +37,6 @@ class ConfigManager:
                 "sse_host": "127.0.0.1",
             },
             "docker": {
-                "approval_mode": "none",  # "none" | "list" | "all"
-                "approved_images": [],
                 "default_image": "quay.io/jupyter/scipy-notebook",
             },
         }
@@ -147,50 +146,33 @@ class ConfigManager:
         return None
 
     # ----------------------------------------------------------------
-    # Docker approval (client-side permission control)
+    # Toolset directories
     # ----------------------------------------------------------------
 
-    def get_docker_approval_mode(self) -> str:
-        """Return the current Docker-approval mode: 'none', 'list', or 'all'."""
-        return self.config.get("docker", {}).get("approval_mode", "none")
+    def get_toolset_dirs(self) -> List[str]:
+        return self.config.get("toolset_dirs", [])
 
-    def set_docker_approval_mode(self, mode: str) -> None:
-        """Set the Docker-approval mode.
-
-        *mode* must be one of ``"none"``, ``"list"``, or ``"all"``.
-        """
-        if mode not in ("none", "list", "all"):
-            raise ValueError(
-                f"Invalid approval mode '{mode}'. Must be 'none', 'list', or 'all'."
-            )
-        self.config.setdefault("docker", {})["approval_mode"] = mode
-        self.save()
-
-    def get_approved_docker_images(self) -> list:
-        """Return the list of explicitly approved Docker images."""
-        return self.config.get("docker", {}).get("approved_images", [])
-
-    def add_approved_docker_image(self, image: str) -> None:
-        """Add a Docker image to the approved list (deduplicated)."""
-        approved: list = self.config.setdefault("docker", {}).setdefault(
-            "approved_images", []
-        )
-        if image not in approved:
-            approved.append(image)
+    def add_toolset_dir(self, path: str) -> None:
+        dirs: list = self.config.setdefault("toolset_dirs", [])
+        if path not in dirs:
+            dirs.append(path)
             self.save()
 
-    def remove_approved_docker_image(self, image: str) -> None:
-        """Remove a Docker image from the approved list."""
-        approved: list = self.config.get("docker", {}).get("approved_images", [])
-        if image in approved:
-            approved.remove(image)
+    def remove_toolset_dir(self, path: str) -> None:
+        dirs: list = self.config.get("toolset_dirs", [])
+        if path in dirs:
+            dirs.remove(path)
             self.save()
+
+    # ----------------------------------------------------------------
+    # Docker worker image (still needed for toolset execution sandbox)
+    # ----------------------------------------------------------------
 
     def get_default_docker_image(self) -> str:
-        """Return the default Docker image used when a tool does not specify one."""
+        """Return the default Docker image for the warm worker sandbox."""
         return self.config.get("docker", {}).get("default_image", "python:3.11-slim")
 
     def set_default_docker_image(self, image: str) -> None:
-        """Set the default Docker image for docker-type tools."""
+        """Set the default Docker image for the warm worker sandbox."""
         self.config.setdefault("docker", {})["default_image"] = image
         self.save()

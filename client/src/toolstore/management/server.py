@@ -39,6 +39,7 @@ import shutil
 from ..config_manager import ConfigManager
 from ..mcp_client import FullMCPClient, disconnect_all
 from ..skill_manager import SkillDefinition, SkillManager, get_skill_manager
+from ..toolset_manager import ToolsetManager, ToolsetDefinition, get_toolset_manager
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ _DEFAULT_CFG: dict[str, Any] = {
     "mcp_servers": {},
     "tools": {},
     "skills": {},
+    "toolsets": {},
 }
 
 
@@ -87,7 +89,7 @@ def load_config() -> dict:
         cfg[_SPA_MCP_KEY] = dict(cli_servers)
 
     # Copy SPA-specific keys if present
-    for k in ("tools", "skills"):
+    for k in ("tools", "skills", "toolsets"):
         if k in cm.config:
             cfg[k] = cm.config[k]
 
@@ -110,6 +112,7 @@ def save_config(cfg: dict) -> None:
     # Store SPA extensions alongside CLI keys
     cm.config["tools"] = cfg.get("tools", {})
     cm.config["skills"] = cfg.get("skills", {})
+    cm.config["toolsets"] = cfg.get("toolsets", {})
 
     cm.save()
 
@@ -252,12 +255,14 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._serve_spa()
             elif p == "/api/config":
                 self._json(load_config())
-            elif p.startswith("/api/tools"):
+            elif p == "/api/tools":
                 self._list_tools()
             elif p == "/api/mcp/servers":
                 self._list_mcp()
             elif p == "/api/skills":
                 self._list_skills()
+            elif p == "/api/toolsets":
+                self._list_toolsets()
             elif p == "/api/files":
                 self._list_files()
             elif p.startswith("/static/"):
@@ -282,6 +287,10 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._register_skill(body)
             elif p == "/api/skills/folder":
                 self._register_skill_folder(body)
+            elif p == "/api/toolsets":
+                self._register_toolset(body)
+            elif p == "/api/toolsets/folder":
+                self._register_toolset_folder(body)
             elif p.endswith("/connect") and "/api/mcp/servers/" in p:
                 sid = p.rsplit("/", 2)[-2]
                 self._connect_mcp(sid)
@@ -314,6 +323,9 @@ class _Handler(SimpleHTTPRequestHandler):
             elif p.startswith("/api/skills/"):
                 name = p.split("/")[-1]
                 self._remove_skill(name)
+            elif p.startswith("/api/toolsets/"):
+                name = p.split("/")[-1]
+                self._remove_toolset(name)
             else:
                 self._json({"error": "Not found"}, 404)
         except Exception as exc:
@@ -746,6 +758,122 @@ class _Handler(SimpleHTTPRequestHandler):
         save_config(cfg)
         self._json({"success": True})
 
+    # ── API: toolsets ────────────────────────────────────────────────────
+
+    def _list_toolsets(self):
+        """GET /api/toolsets — return toolsets on disk via ToolsetManager."""
+        cm = _config_manager()
+        toolset_dirs = cm.get_toolset_dirs()
+        if not toolset_dirs:
+            self._json({})
+            return
+
+        mgr = get_toolset_manager(toolset_dirs)
+        mgr.scan()
+
+        result = {}
+        for td in mgr.get_all():
+            if not td.is_valid:
+                continue
+            result[td.name] = {
+                "description": td.doc[:200] if td.doc else "",
+                "path": str(td.directory),
+                "functions": list(td.functions.keys()),
+            }
+
+        # Persist discovered toolsets to config for the tools list
+        cfg = load_config()
+        cfg.setdefault("toolsets", {})
+        for name, info in result.items():
+            if name not in cfg["toolsets"]:
+                cfg["toolsets"][name] = {
+                    "source": f"toolset:{name}",
+                    "description": info["description"],
+                }
+        save_config(cfg)
+
+        self._json(result)
+
+    def _register_toolset(self, body: dict):
+        """POST /api/toolsets — register a single toolset directory."""
+        path = body.get("path", "").strip()
+        if not path:
+            self._json({"error": "path is required"}, 400); return
+
+        ts_path = Path(path).expanduser().resolve()
+        if not ts_path.is_dir():
+            self._json({"error": f"Not a directory: {ts_path}"}, 400); return
+
+        # Validate the toolset
+        td = ToolsetDefinition(ts_path)
+        if not td.load():
+            self._json({"error": "Toolset validation failed",
+                        "details": td.errors}, 400); return
+
+        # Add the parent dir to toolset dirs
+        parent = str(ts_path.parent)
+        cm = _config_manager()
+        cm.add_toolset_dir(parent)
+
+        # Register in config.toolsets
+        cfg = load_config()
+        cfg.setdefault("toolsets", {})
+        cfg["toolsets"][td.name] = {
+            "source": f"toolset:{td.name}",
+            "description": td.doc[:200] if td.doc else "",
+        }
+        save_config(cfg)
+
+        self._json({"success": True,
+                    "toolset": td.name,
+                    "functions": list(td.functions.keys()),
+                    "path": str(ts_path)})
+
+    def _register_toolset_folder(self, body: dict):
+        """POST /api/toolsets/folder — scan a folder for toolsets."""
+        path = body.get("path", "").strip()
+        if not path:
+            self._json({"error": "path is required"}, 400); return
+
+        fp = Path(path).expanduser().resolve()
+        if not fp.is_dir():
+            self._json({"error": f"Not a directory: {fp}"}, 400); return
+
+        cm = _config_manager()
+        cm.add_toolset_dir(str(fp))
+
+        mgr = get_toolset_manager([str(fp)])
+        count = mgr.scan()
+
+        # Register discovered toolsets
+        cfg = load_config()
+        cfg.setdefault("toolsets", {})
+        registered = []
+        for td in mgr.get_all():
+            if not td.is_valid:
+                continue
+            cfg["toolsets"][td.name] = {
+                "source": f"toolset:{td.name}",
+                "description": td.doc[:200] if td.doc else "",
+            }
+            registered.append(td.name)
+        save_config(cfg)
+
+        self._json({"success": True,
+                    "registered": registered,
+                    "count": count})
+
+    def _remove_toolset(self, name: str):
+        """DELETE /api/toolsets/<name> — remove a toolset from config."""
+        cfg = load_config()
+        ts = cfg.get("toolsets", {})
+        if name not in ts:
+            self._json({"error": "Toolset not found"}, 404); return
+
+        del ts[name]
+        save_config(cfg)
+        self._json({"success": True})
+
     # ── API: run code in Docker ─────────────────────────────────────────
 
     def _run_mcp_code(self, body: dict):
@@ -860,13 +988,12 @@ class _Handler(SimpleHTTPRequestHandler):
     def _list_tools(self):
         """GET /api/tools  — return tools organised by source.
 
-        Returns a dict with per-source groups so the UI can display them
-        in separate sections:
+        Returns a dict with per-source groups:
 
-            {"mcp": {name: tool, ...}, "registry": {name: tool, ...}}
+            {"mcp": {...}, "registry": {...}, "toolsets": {...}}
         """
         cfg = load_config()
-        result: dict[str, dict] = {"mcp": {}, "registry": {}}
+        result: dict[str, dict] = {"mcp": {}, "registry": {}, "toolsets": {}}
 
         # 1. MCP-discovered tools (already registered in config by connect)
         result["mcp"] = cfg.get("tools", {})
@@ -888,6 +1015,18 @@ class _Handler(SimpleHTTPRequestHandler):
                     }
             except Exception:
                 pass
+
+        # 3. Toolset tools from local disk
+        result["toolsets"] = {}
+        for name, ts_info in cfg.get("toolsets", {}).items():
+            result["toolsets"][name] = {
+                "source": ts_info.get("source", f"toolset:{name}"),
+                "enabled": True,
+                "exposure": "primary",
+                "parallel_safe": False,
+                "subagent_safe": False,
+                "description": ts_info.get("description", ""),
+            }
 
         self._json(result)
 

@@ -18,24 +18,23 @@ class User(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
-# Tool  (supports 'api', 'mcp', 'skill', and the new 'docker' type)
+# Tool  (toolset type only — mcp and skill are established external ecosystems)
 # ---------------------------------------------------------------------------
 class Tool(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     version: str
-    type: str  # 'api', 'mcp', 'skill', or 'docker'
+    type: str = "toolset"
     description: str
     definition: dict = Field(sa_column=Column(JSON))  # Stores the full JSON schema
 
-    # Skill-specific fields: SKILL.md body and bundled files
-    body: Optional[str] = Field(default=None)           # Markdown instructions body
-    skill_files: Optional[dict] = Field(default=None, sa_column=Column(JSON))
-
-    # Docker-specific fields (for type='docker')
-    docker_image: Optional[str] = Field(default=None)   # custom image; None = use default
-    code: Optional[str] = Field(default=None)            # executable Python code
+    # Toolset fields
+    code: Optional[str] = Field(default=None)            # toolset.py source code
     code_base64: Optional[str] = Field(default=None)     # base64-encoded code
+    doc: Optional[str] = Field(default=None)              # doc.md content
+    docker_image: Optional[str] = Field(default=None)     # custom Docker image
+    env_vars: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    requirements: Optional[str] = Field(default=None)    # pip requirements (one per line)
 
     owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="tools")
