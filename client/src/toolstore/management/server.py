@@ -1008,7 +1008,7 @@ class _Handler(SimpleHTTPRequestHandler):
                     result["registry"][name] = {
                         "source": tdef.get("source", "registry"),
                         "enabled": True,
-                        "exposure": "primary",
+                        "exposure": "hidden",
                         "parallel_safe": False,
                         "subagent_safe": False,
                         "description": tdef.get("description", ""),
@@ -1022,7 +1022,7 @@ class _Handler(SimpleHTTPRequestHandler):
             result["toolsets"][name] = {
                 "source": ts_info.get("source", f"toolset:{name}"),
                 "enabled": True,
-                "exposure": "primary",
+                "exposure": ts_info.get("exposure", "secondary"),
                 "parallel_safe": False,
                 "subagent_safe": False,
                 "description": ts_info.get("description", ""),
@@ -1033,11 +1033,19 @@ class _Handler(SimpleHTTPRequestHandler):
     def _patch_tool(self, name: str, body: dict):
         cfg = load_config()
         tools = cfg.setdefault("tools", {})
-        if name not in tools:
+        toolsets = cfg.setdefault("toolsets", {})
+
+        target = None
+        if name in tools:
+            target = tools
+        elif name in toolsets:
+            target = toolsets
+        else:
             self._json({"error": "Tool not found"}, 404); return
+
         for k in ("exposure", "enabled", "parallel_safe", "subagent_safe"):
             if k in body:
-                tools[name][k] = body[k]
+                target[name][k] = body[k]
         save_config(cfg)
         self._json({"success": True, "tool": name})
 

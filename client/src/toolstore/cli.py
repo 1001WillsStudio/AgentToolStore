@@ -9,6 +9,7 @@ from rich.table import Table
 from toolstore.config_manager import ConfigManager
 from toolstore.index_manager import IndexManager
 from toolstore.skill_manager import SkillDefinition, get_skill_manager
+from toolstore.toolset_manager import ToolsetDefinition, get_toolset_manager
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
@@ -105,6 +106,17 @@ def update():
         except Exception as e:
             console.print(f"[red]Failed to scan {server_name}:[/red] {e}")
 
+    # Scan local toolsets
+    toolset_dirs = config_manager.get_toolset_dirs()
+    if toolset_dirs:
+        try:
+            tm = get_toolset_manager(toolset_dirs)
+            tcount = tm.scan()
+            if tcount:
+                index_manager.update_from_remote(tm.get_all_tool_definitions())
+        except Exception as e:
+            console.print(f"[red]Toolset scan failed:[/red] {e}")
+
     count = len(index_manager.index_data.get("tools", {}))
     console.print(f"OK: Index update complete ({count} total tools loaded)")
 
@@ -132,12 +144,15 @@ def search(query: str):
 @app.command()
 def use(
     tool_name: str = typer.Argument(..., help="Name of the tool to execute"),
-    params: list[str] = typer.Argument(None, help="Parameters in format key=value")
+    params: list[str] = typer.Argument(None, help="Parameters in format key=value"),
+    function: str = typer.Option(None, "--function", "-f", help="Function name to call (for toolset type)"),
 ):
     """
     Execute a tool immediately.
-    
-    Example: toolstore use weather-api latitude=37.77 longitude=-122.41
+
+    Examples:
+        toolstore use weather-api latitude=37.77 longitude=-122.41
+        toolstore use my-toolset --function get_weather location=London
     """
     tool = index_manager.get_tool(tool_name)
     if not tool:
@@ -145,48 +160,59 @@ def use(
         raise typer.Exit(1)
 
     console.print(f"[bold green]Using tool:[/bold green] {tool_name}")
-    
-    # Parse params into dict
+
+    # Parse params into dict (with basic type inference)
     parsed_params = {}
     if params:
         for p in params:
             if "=" in p:
                 k, v = p.split("=", 1)
-                # Basic type inference could go here
-                parsed_params[k] = v
-    
+                # Basic type inference
+                try:
+                    parsed_params[k] = int(v)
+                except ValueError:
+                    try:
+                        parsed_params[k] = float(v)
+                    except ValueError:
+                        lower = v.lower()
+                        if lower == "true":
+                            parsed_params[k] = True
+                        elif lower == "false":
+                            parsed_params[k] = False
+                        elif lower == "null" or lower == "none":
+                            parsed_params[k] = None
+                        else:
+                            parsed_params[k] = v
+
     # Dispatch execution based on type
     tool_type = tool.get("type")
     if tool_type == "api":
         import httpx
-        
+
         url = tool["endpoint"]
         method = tool.get("method", "GET").upper()
-        
+
         # Handle path parameters if any (e.g. {area}/{location})
-        # Simple heuristic: if URL has placeholders, try to fill them from params
         final_url = url
         for k, v in parsed_params.items():
             if f"{{{k}}}" in final_url:
                 final_url = final_url.replace(f"{{{k}}}", str(v))
-        
+
         console.print(f"Sending {method} request to: {final_url}")
-        
+
         try:
             if method == "GET":
-                # For GET, remaining params go to query string
-                # Filter out path params that were already consumed
-                query_params = {k:v for k,v in parsed_params.items() if f"{{{k}}}" not in url}
+                query_params = {k: v for k, v in parsed_params.items() if f"{{{k}}}" not in url}
                 response = httpx.get(final_url, params=query_params)
             else:
                 response = httpx.post(final_url, json=parsed_params)
-            
+
             console.print(f"\n[bold]Response ({response.status_code}):[/bold]")
             try:
                 console.print(response.json())
-            except:
+            except Exception:
                 console.print(response.text)
-                
+
         except Exception as e:
             console.print(f"[red]Execution failed:[/red] {e}")
             raise typer.Exit(1)
@@ -196,35 +222,39 @@ def use(
         if not server_name:
             console.print("[red]Error:[/red] Tool definition missing 'mcp_server'")
             raise typer.Exit(1)
-            
+
         servers = config_manager.get_mcp_servers()
         config = servers.get(server_name)
-        
+
         if not config:
             console.print(f"[red]Error:[/red] MCP server '{server_name}' not found in config")
             raise typer.Exit(1)
-            
+
         try:
             from toolstore.mcp_client import FullMCPClient
             client = FullMCPClient(server_name, config)
             client.connect()
             result = client.call_tool(tool["name"], parsed_params)
             client.disconnect()
-            
+
             console.print("\n[bold]Result:[/bold]")
             console.print(result)
-            
+
         except Exception as e:
             console.print(f"[red]MCP Execution failed:[/red] {e}")
             raise typer.Exit(1)
+
     elif tool_type == "docker":
         from toolstore.native_tool import _execute_docker
         console.print("[blue]Running docker-type tool...[/blue]")
         result = _execute_docker(tool, parsed_params)
         console.print(f"\n[bold]Output:[/bold]\n{result}")
 
+    elif tool_type == "toolset":
+        _use_toolset(tool, parsed_params, function)
+
     else:
-        console.print(f"Unknown tool type: {tool_type}")
+        console.print(f"[yellow]Unknown tool type:[/yellow] {tool_type}")
 
 @app.command()
 def info(tool_name: str):
@@ -853,6 +883,295 @@ def skill_publish(
 
 
 # ------------------------------------------------------------------
+# Toolset commands
+# ------------------------------------------------------------------
+
+toolset_app = typer.Typer(help="Manage Toolsets (agent-centric managed tools)")
+app.add_typer(toolset_app, name="toolset")
+
+
+@toolset_app.command("scan")
+def toolset_scan(
+    path: str = typer.Argument(None, help="Directory to scan for toolsets")
+):
+    """Scan for toolsets in configured directories (or a specific path)."""
+    if path:
+        config_manager.add_toolset_dir(path)
+
+    dirs = config_manager.get_toolset_dirs()
+    if not dirs:
+        console.print("[yellow]No toolset directories configured.[/yellow] "
+                       "Use 'toolstore toolset add-dir <path>' first.")
+        return
+
+    tm = get_toolset_manager(dirs)
+    count = tm.scan()
+
+    if count == 0:
+        console.print("No toolsets found.")
+        return
+
+    # Register in index
+    index_manager.update_from_remote(tm.get_all_tool_definitions())
+
+    toolsets = tm.get_all()
+    console.print(f"[green]Found {len(toolsets)} toolsets:[/green]")
+    for td in toolsets:
+        status = "[green]✓[/green]" if td.is_valid else "[red]✗[/red]"
+        fn_count = len(td.functions)
+        console.print(f"  {status} {td.name} ({fn_count} function(s))")
+        if td.doc:
+            first_line = td.doc.split("\n")[0][:80]
+            console.print(f"    {first_line}")
+        for err in td.errors:
+            console.print(f"    [red]! {err}[/red]")
+
+
+@toolset_app.command("add-dir")
+def toolset_add_dir(
+    path: str = typer.Argument(..., help="Directory path to add")
+):
+    """Add a directory to the toolset search path."""
+    config_manager.add_toolset_dir(path)
+    console.print(f"[green]Added toolset dir:[/green] {path}")
+
+
+@toolset_app.command("remove-dir")
+def toolset_remove_dir(
+    path: str = typer.Argument(..., help="Directory to remove")
+):
+    """Remove a directory from the toolset search path."""
+    config_manager.remove_toolset_dir(path)
+    console.print(f"[green]Removed toolset dir:[/green] {path}")
+
+
+@toolset_app.command("list-dirs")
+def toolset_list_dirs():
+    """List configured toolset directories."""
+    dirs = config_manager.get_toolset_dirs()
+    if not dirs:
+        console.print("No toolset directories configured.")
+        return
+    console.print("Toolset directories:")
+    for d in dirs:
+        console.print(f"  - {d}")
+
+
+@toolset_app.command("show")
+def toolset_show(
+    name: str = typer.Argument(..., help="Toolset name")
+):
+    """Display the full doc.md content of a toolset."""
+    dirs = config_manager.get_toolset_dirs()
+    tm = get_toolset_manager(dirs)
+    if not tm.get(name):
+        tm.scan()
+
+    td = tm.get(name)
+    if td is None:
+        console.print(f"[red]Toolset '{name}' not found.[/red]")
+        return
+
+    console.print(f"[bold cyan]{td.name}[/bold cyan]\n")
+    if td.doc:
+        console.print(td.doc)
+    else:
+        console.print("[dim](no doc.md found)[/dim]")
+
+    console.print(f"\n[bold]Functions ({len(td.functions)}):[/bold]")
+    for fn_name, fn_info in td.functions.items():
+        params = fn_info.get("parameters", {})
+        param_strs = []
+        for pname, pinfo in params.items():
+            req = "" if not pinfo.get("required") else ""
+            param_strs.append(f"{pname}")
+        sig = f"{fn_name}({', '.join(param_strs)})"
+        console.print(f"  [cyan]{sig}[/cyan]")
+        if fn_info.get("description"):
+            console.print(f"    {fn_info['description']}")
+
+
+@toolset_app.command("validate")
+def toolset_validate(
+    path: str = typer.Argument(..., help="Path to toolset directory")
+):
+    """Validate a toolset directory."""
+    from pathlib import Path
+    td = ToolsetDefinition(Path(path))
+    if td.load():
+        console.print(f"[green]✓[/green] {td.name} is valid")
+        console.print(f"  Functions: {list(td.functions.keys())}")
+        if td.doc:
+            first_line = td.doc.split("\n")[0][:100]
+            console.print(f"  Doc: {first_line}")
+    else:
+        console.print(f"[red]✗[/red] Validation failed for {path}")
+        for err in td.errors:
+            console.print(f"  [red]{err}[/red]")
+
+
+@toolset_app.command("list")
+def toolset_list():
+    """List all discovered toolsets."""
+    dirs = config_manager.get_toolset_dirs()
+    tm = get_toolset_manager(dirs)
+    if not tm.get_all():
+        tm.scan()
+
+    toolsets = tm.get_all()
+    if not toolsets:
+        console.print("No toolsets found.")
+        console.print("Use 'toolstore toolset add-dir <path>' then 'toolstore toolset scan'.")
+        return
+
+    table = Table(title="Discovered Toolsets")
+    table.add_column("Name", style="cyan")
+    table.add_column("Functions", style="green")
+    table.add_column("Description")
+
+    for td in toolsets:
+        fn_count = str(len(td.functions))
+        desc = (td.doc.split("\n")[0] if td.doc else "(no doc)")[:80]
+        table.add_row(td.name, fn_count, desc)
+
+    console.print(table)
+
+
+@toolset_app.command("publish")
+def toolset_publish(
+    path: str = typer.Argument(..., help="Path to toolset directory"),
+):
+    """Publish a toolset to the ToolStore registry."""
+    import json
+    import httpx
+    from pathlib import Path
+
+    toolset_dir = Path(path).resolve()
+    if not toolset_dir.is_dir():
+        console.print(f"[red]Error:[/red] '{path}' is not a directory")
+        raise typer.Exit(1)
+
+    td = ToolsetDefinition(toolset_dir)
+    if not td.load():
+        console.print(f"[red]✗ Toolset validation failed:[/red]")
+        for err in td.errors:
+            console.print(f"  [red]• {err}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Validated: {td.name}")
+    console.print(f"  Functions: {list(td.functions.keys())}")
+
+    # Read toolset.py source
+    code_path = toolset_dir / "toolset.py"
+    code = code_path.read_text(encoding="utf-8")
+
+    # Build upload payload
+    upload_data = {
+        "name": td.name,
+        "type": "toolset",
+        "description": td.doc.split("\n")[0] if td.doc else td.name,
+        "doc": td.doc,
+        "code": code,
+        "bindings": td.functions,
+    }
+
+    # Auth
+    token = config_manager.get_token()
+    if not token:
+        console.print("[yellow]Please login first using 'toolstore login'[/yellow]")
+        raise typer.Exit(1)
+
+    base_url = config_manager.get_registry_url().replace("/index.json", "")
+    publish_url = f"{base_url}/publish"
+
+    console.print(f"Publishing [cyan]{td.name}[/cyan] to {base_url}...")
+
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.post(publish_url, json=upload_data, headers=headers)
+
+        if response.status_code == 200:
+            result = response.json()
+            action = result.get("action", "published")
+            console.print(f"[bold green]✓ Toolset {action}![/bold green]")
+        elif response.status_code == 401:
+            console.print("[red]Unauthorized. Please login again.[/red]")
+            raise typer.Exit(1)
+        else:
+            detail = ""
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            console.print(f"[red]Publish failed ({response.status_code}):[/red] {detail}")
+            raise typer.Exit(1)
+
+    except httpx.ConnectError:
+        console.print(f"[red]Connection failed:[/red] Could not reach {base_url}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+# ------------------------------------------------------------------
+# Helper: toolset execution from CLI
+# ------------------------------------------------------------------
+
+def _use_toolset(tool: dict, parsed_params: dict, function: str | None) -> None:
+    """Execute a toolset (local or remote) from the CLI."""
+    bindings = tool.get("bindings", {})
+
+    # Determine which function to call
+    if function:
+        fn_name = function
+    elif "function" in parsed_params:
+        fn_name = parsed_params.pop("function")
+    elif len(bindings) == 1:
+        fn_name = next(iter(bindings))
+    else:
+        names = list(bindings.keys()) if bindings else []
+        console.print(
+            f"[red]Error:[/red] Multiple functions available. "
+            f"Use --function to specify one. "
+            f"Available: {', '.join(names) or '(none)'}"
+        )
+        raise typer.Exit(1)
+
+    # Validate the function exists
+    if fn_name not in bindings:
+        names = list(bindings.keys())
+        console.print(
+            f"[red]Error:[/red] Unknown function '{fn_name}'. "
+            f"Available: {', '.join(names)}"
+        )
+        raise typer.Exit(1)
+
+    # Dispatch: local vs remote
+    toolset_dir = tool.get("toolset_dir")
+    code = tool.get("code") or tool.get("code_base64")
+
+    if toolset_dir:
+        console.print(f"[blue]Running local toolset:[/blue] {tool['name']}.{fn_name}")
+        console.print(f"  Source: {toolset_dir}")
+        from toolstore.native_tool import _execute_toolset_local
+        result = _execute_toolset_local(toolset_dir, fn_name, parsed_params)
+        console.print(f"\n[bold]Result:[/bold]\n{result}")
+
+    elif code:
+        console.print(f"[blue]Running remote toolset:[/blue] {tool['name']}.{fn_name}")
+        docker_image = tool.get("docker_image", "unknown")
+        console.print(f"  Image: {docker_image}")
+        from toolstore.native_tool import _execute_toolset_remote
+        result = _execute_toolset_remote(tool, fn_name, parsed_params)
+        console.print(f"\n[bold]Result:[/bold]\n{result}")
+
+    else:
+        console.print("[red]Error:[/red] Toolset has neither 'toolset_dir' nor 'code' — cannot execute")
+        raise typer.Exit(1)
+
+
+# ------------------------------------------------------------------
 # Serve command (ToolStore as MCP server)
 # ------------------------------------------------------------------
 
@@ -879,6 +1198,15 @@ def serve(
         if skills:
             index_manager.update_from_remote(sm.to_tool_definitions())
             console.print(f"[green]Loaded {len(skills)} skills[/green]")
+
+    # Ensure toolsets are loaded
+    tm = get_toolset_manager(config_manager.get_toolset_dirs())
+    if config_manager.get_toolset_dirs():
+        console.print(f"[blue]Scanning toolsets...[/blue]")
+        tcount = tm.scan()
+        if tcount:
+            index_manager.update_from_remote(tm.get_all_tool_definitions())
+            console.print(f"[green]Loaded {tcount} toolsets[/green]")
 
     server = ToolStoreMCPServer(index_manager, config_manager, sm)
 

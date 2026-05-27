@@ -38,6 +38,9 @@
   <button class="ts-tab" data-tab="skills">
     <span class="ts-tab-icon">🧩</span> Skills
   </button>
+  <button class="ts-tab" data-tab="toolsets">
+    <span class="ts-tab-icon">🔧</span> Toolsets
+  </button>
   <button class="ts-tab" data-tab="tools">
     <span class="ts-tab-icon">🛠️</span> All Tools
   </button>
@@ -70,6 +73,19 @@
       <div class="ts-empty-icon">🧩</div>
       <p class="ts-empty-title">No Skills Registered</p>
       <p class="ts-empty-desc">Register completed skill files to make them callable by your agent.</p>
+    </div>
+  </section>
+
+  <!-- ═══ Toolsets ═══ -->
+  <section id="tab-toolsets" class="ts-tab-panel">
+    <div class="ts-toolbar">
+      <button id="btn-register-toolset" class="ts-btn ts-btn-primary">+ Register Toolset</button>
+    </div>
+    <div id="toolset-list" class="ts-card-list"></div>
+    <div id="toolset-empty" class="ts-empty hidden">
+      <div class="ts-empty-icon">🔧</div>
+      <p class="ts-empty-title">No Toolsets Registered</p>
+      <p class="ts-empty-desc">Register a <code>toolset.py</code> directory to make its functions callable by your agent. Toolsets support both local (in-process) and Docker-based execution.</p>
     </div>
   </section>
 
@@ -234,6 +250,37 @@
     <div class="ts-form-actions">
       <button type="submit" class="ts-btn ts-btn-primary">Connect</button>
       <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-mcp">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- Register Toolset modal -->
+<div id="modal-toolset" class="ts-modal hidden">
+  <div class="ts-modal-header">
+    <h3>🔧 Register Toolset</h3>
+    <button class="ts-modal-close" data-close="modal-toolset">&times;</button>
+  </div>
+  <form id="form-toolset" class="ts-form">
+    <p class="ts-form-hint">Select a toolset directory containing a valid <code>toolset.py</code> file. The toolset defines callable functions that can run locally or in a Docker container.</p>
+
+    <!-- Option A: server-side file browser -->
+    <div class="ts-section-label">Option 1 — Browse server files</div>
+    <div class="ts-path-row">
+      <label class="ts-label" style="flex:1;">Path on server <input name="path" id="toolset-path" placeholder="~/toolsets/my-toolset"></label>
+      <button type="button" class="ts-btn ts-btn-ghost ts-btn-sm" id="btn-browse-toolset" style="margin-top:18px;">Browse…</button>
+    </div>
+    <p class="ts-form-hint">Pick a directory that lives on the <strong>ToolStore server</strong> filesystem (inside Docker).</p>
+
+    <!-- Option B: browser-native folder picker -->
+    <div class="ts-section-label" style="margin-top:16px;">Option 2 — Upload from your computer</div>
+    <button type="button" class="ts-btn ts-btn-secondary" id="btn-upload-toolset-local" style="width:100%;margin-top:4px;">📂 Choose Folder from My Computer…</button>
+    <p class="ts-form-hint">Opens your system file picker. The folder will be compressed and sent to the server.</p>
+    <span id="upload-toolset-local-path" style="display:none;font-size:12px;color:var(--ts-text-muted);margin-top:4px;"></span>
+    <input type="file" id="local-toolset-input" webkitdirectory="" directory="" multiple style="display:none;">
+
+    <div class="ts-form-actions">
+      <button type="submit" class="ts-btn ts-btn-primary" id="btn-toolset-install">Register</button>
+      <button type="button" class="ts-btn ts-btn-ghost" data-close="modal-toolset">Cancel</button>
     </div>
   </form>
 </div>

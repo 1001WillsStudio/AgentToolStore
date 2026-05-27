@@ -11,9 +11,11 @@ let state = {
   config: null,
   mcpServers: {},
   skills: {},
+  toolsets: {},
   tools: {},
   mcpTools: {},
   registryTools: {},
+  toolsetTools: {},
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -50,6 +52,10 @@ const api = {
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
   runCode(cfg)          { return this._fetch('POST', '/api/mcp/code', cfg); },
+  listToolsets()       { return this._fetch('GET', '/api/toolsets'); },
+  registerToolset(cfg)  { return this._fetch('POST', '/api/toolsets', cfg); },
+  registerToolsetFolder(cfg) { return this._fetch('POST', '/api/toolsets/folder', cfg); },
+  removeToolset(name)   { return this._fetch('DELETE', `/api/toolsets/${name}`); },
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -79,6 +85,7 @@ document.querySelectorAll('.ts-tab').forEach(function (btn) {
     if (panel) panel.classList.add('active');
     if (tab === 'mcp') refreshMcp();
     if (tab === 'skills') refreshSkills();
+    if (tab === 'toolsets') refreshToolsets();
     if (tab === 'tools') refreshTools();
   });
 });
@@ -137,9 +144,11 @@ async function loadAll() {
       var categorized = await api.listTools();
       state.mcpTools = categorized.mcp || {};
       state.registryTools = categorized.registry || {};
+      state.toolsetTools = categorized.toolsets || {};
     } catch (_) {
       state.mcpTools = {};
       state.registryTools = {};
+      state.toolsetTools = {};
     }
     updateStatus('ok', 'connected');
   } catch (e) {
@@ -258,12 +267,16 @@ function renderToolRow(name, tool) {
 async function setExposure(select) {
   var name = select.dataset.tool;
   var next = select.value;
-  var tool = state.tools[name];
+  // Look up in all tool registries (config, MCP, toolsets)
+  var tool = state.tools[name] || state.mcpTools[name] || state.toolsetTools[name];
   if (!tool) { toast('Tool not found: ' + name, 'error'); return; }
   try {
     await api.patchTool(name, { exposure: next });
     tool.exposure = next;
-    state.tools[name] = tool;
+    // Write back to whichever registry owns this tool
+    if (state.tools[name]) state.tools[name] = tool;
+    if (state.mcpTools[name]) state.mcpTools[name] = tool;
+    if (state.toolsetTools[name]) state.toolsetTools[name] = tool;
     select.className = 'ts-exposure-select ' + next;
     toast(esc(name) + ' → ' + next);
   } catch (e) {
@@ -665,6 +678,163 @@ async function removeSkill(name) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Toolsets tab
+// ═══════════════════════════════════════════════════════════════════════
+
+async function refreshToolsets() {
+  try {
+    var toolsets = await api.listToolsets();
+    state.toolsets = toolsets || {};
+  } catch (e) { /* keep stale */ }
+
+  var list = document.getElementById('toolset-list');
+  var empty = document.getElementById('toolset-empty');
+  var names = Object.keys(state.toolsets);
+
+  if (names.length === 0) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  list.innerHTML = names.map(function (name) {
+    var ts = state.toolsets[name];
+    var desc = ts.description || '';
+    var fnNames = (ts.functions || []).join(', ');
+    return '<div class="ts-card">'
+      + '<div class="ts-card-header">'
+      + '<div>'
+      + '<div class="ts-card-title">' + esc(name) + '</div>'
+      + '<div class="ts-card-subtitle">' + esc(desc.length > 100 ? desc.slice(0,100) + '…' : desc) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeToolset(\'' + escAttr(name) + '\')">Remove</button>'
+      + '</div>'
+      + '</div>'
+      + (fnNames ? '<div class="ts-card-body" style="font-family:var(--font-mono);font-size:0.75rem;">Functions: ' + esc(fnNames) + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+async function removeToolset(name) {
+  try {
+    await api.removeToolset(name);
+    delete state.toolsets[name];
+    delete state.tools['toolset:' + name];
+    toast('Removed: ' + esc(name));
+    refreshToolsets();
+  } catch (e) {
+    toast('Remove failed: ' + e.message, 'error');
+  }
+}
+
+// ── Toolset modal open/upload/submit ──
+
+var _toolsetUploadFiles = null;
+
+document.getElementById('btn-register-toolset').addEventListener('click', function () {
+  document.getElementById('form-toolset').reset();
+  document.getElementById('upload-toolset-local-path').style.display = 'none';
+  document.getElementById('upload-toolset-local-path').textContent = '';
+  _toolsetUploadFiles = null;
+  openModal('modal-toolset');
+});
+
+document.getElementById('btn-upload-toolset-local').addEventListener('click', function () {
+  document.getElementById('local-toolset-input').click();
+});
+
+document.getElementById('local-toolset-input').addEventListener('change', function () {
+  var files = this.files;
+  if (!files || files.length === 0) return;
+  var firstRel = files[0].webkitRelativePath || files[0].name;
+  var folderName = firstRel.split('/')[0];
+  var label = document.getElementById('upload-toolset-local-path');
+  label.textContent = 'Selected: ' + folderName + ' (' + files.length + ' files)';
+  label.style.display = 'block';
+  _toolsetUploadFiles = files;
+  document.getElementById('toolset-path').value = '';
+});
+
+document.getElementById('form-toolset').addEventListener('submit', async function (e) {
+  e.preventDefault();
+
+  // --- Local upload path ---
+  if (_toolsetUploadFiles && _toolsetUploadFiles.length > 0) {
+    var btn = document.getElementById('btn-toolset-install');
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    try {
+      if (typeof JSZip === 'undefined') {
+        await new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+          s.onload = resolve;
+          s.onerror = function () { reject(new Error('Failed to load JSZip')); };
+          document.head.appendChild(s);
+        });
+      }
+      var zip = new JSZip();
+      var files = _toolsetUploadFiles;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var relPath = f.webkitRelativePath || f.name;
+        var parts = relPath.split('/');
+        var innerPath = parts.slice(1).join('/');
+        if (!innerPath) continue;
+        var buf = await f.arrayBuffer();
+        zip.file(innerPath, buf);
+      }
+      var zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+      var base64 = await new Promise(function (resolve) {
+        var reader = new FileReader();
+        reader.onloadend = function () {
+          resolve(reader.result.split(',')[1]);
+        };
+        reader.readAsDataURL(zipBlob);
+      });
+
+      // Upload as a skill-zip then discover toolsets from the extracted contents
+      var res = await api.uploadSkill({ archive: base64 });
+      var regList = res.registered || [];
+      var failList = res.failed || [];
+      var msg = 'Uploaded ' + regList.length + ' item' + (regList.length !== 1 ? 's' : '');
+      if (failList.length) {
+        msg += ' (' + failList.length + ' failed: ' + failList.map(function (f) { return f.name; }).join(', ') + ')';
+      }
+      toast(msg, failList.length ? 'error' : 'success');
+      closeModal('modal-toolset');
+      refreshToolsets();
+    } catch (err) {
+      toast('Upload failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Register';
+    }
+    return;
+  }
+
+  // --- Server path ---
+  var fd = new FormData(this);
+  var payload = { path: fd.get('path').trim() };
+  if (!payload.path) { toast('Please select a toolset directory or upload a folder', 'error'); return; }
+  try {
+    var res = await api.registerToolset(payload);
+    state.toolsets[res.toolset] = {
+      description: '',
+      path: res.path || payload.path,
+      functions: res.functions || [],
+    };
+    toast('Registered: ' + esc(res.toolset) + ' (' + (res.functions || []).length + ' functions)');
+    closeModal('modal-toolset');
+    refreshToolsets();
+  } catch (err) {
+    toast('Failed: ' + err.message, 'error');
+  }
+});
+
 // Track which mode the user chose (server-path vs local-upload)
 var _skillUploadFiles = null;
 
@@ -811,6 +981,22 @@ document.getElementById('btn-browse-skill').addEventListener('click', function (
   btn.onclick = function () {
     var path = document.getElementById('browser-path').value;
     if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
+    if (browserTarget === 'toolset') document.getElementById('toolset-path').value = path;
+    closeModal('modal-browser');
+  };
+  openModal('modal-browser');
+});
+
+document.getElementById('btn-browse-toolset').addEventListener('click', function () {
+  browserTarget = 'toolset';
+  document.getElementById('browser-title').textContent = 'Select Toolset Directory';
+  navigateBrowser(document.getElementById('toolset-path').value || '~');
+  var btn = document.getElementById('btn-browser-select');
+  btn.textContent = 'Select Current Folder';
+  btn.onclick = function () {
+    var path = document.getElementById('browser-path').value;
+    if (browserTarget === 'toolset') document.getElementById('toolset-path').value = path;
+    if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
     closeModal('modal-browser');
   };
   openModal('modal-browser');
@@ -839,8 +1025,9 @@ async function navigateBrowser(path) {
     if (data.error) { list.innerHTML = '<div class="ts-browser-entry" style="color:var(--ts-danger);">' + esc(data.error) + '</div>'; return; }
     document.getElementById('browser-path').value = data.path;
     var html = '<div class="ts-browser-entry ts-browser-up" onclick="navigateBrowser(\'' + escAttr(data.parent) + '\')">📁 ..</div>';
-    // Skill browser: directories are selectable (a skill IS a directory).
+    // Skill & Toolset browser: directories are selectable.
     var isSkill = browserTarget === 'skill' || browserTarget === 'skill-folder';
+    var isToolset = browserTarget === 'toolset';
     data.entries.forEach(function (e) {
       var icon = e.type === 'directory' ? '📁' : '📄';
       var cls = e.type === 'directory' ? ' dir' : '';
@@ -849,7 +1036,7 @@ async function navigateBrowser(path) {
         // Double-click navigates; a select button lets the user pick the dir.
         html += '<div class="ts-browser-entry' + cls + '">'
           + '<span class="ts-browser-name" onclick="navigateBrowser(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</span>'
-          + (isSkill ? '<button class="ts-btn ts-btn-sm ts-btn-primary" style="margin-left:auto;font-size:11px;padding:2px 8px;" onclick="selectBrowserPath(\'' + escAttr(fp) + '\')">Select</button>' : '')
+          + ((isSkill || isToolset) ? '<button class="ts-btn ts-btn-sm ts-btn-primary" style="margin-left:auto;font-size:11px;padding:2px 8px;" onclick="selectBrowserPath(\'' + escAttr(fp) + '\')">Select</button>' : '')
           + '</div>';
       } else {
         html += '<div class="ts-browser-entry' + cls + '" onclick="selectBrowserPath(\'' + escAttr(fp) + '\')">' + icon + ' ' + esc(e.name) + '</div>';
@@ -864,6 +1051,7 @@ async function navigateBrowser(path) {
 function selectBrowserPath(path) {
   document.getElementById('browser-path').value = path;
   if (browserTarget === 'skill') document.getElementById('skill-path').value = path;
+  if (browserTarget === 'toolset') document.getElementById('toolset-path').value = path;
   closeModal('modal-browser');
 }
 
@@ -878,14 +1066,17 @@ async function refreshTools() {
     var categorized = await api.listTools();
     state.mcpTools = categorized.mcp || {};
     state.registryTools = categorized.registry || {};
+    state.toolsetTools = categorized.toolsets || {};
   } catch (_) { /* keep stale */ }
 
   var list = document.getElementById('tools-list');
   var empty = document.getElementById('tools-empty');
   var summary = document.getElementById('tools-summary');
 
-  // "All Tools" = local tools only (MCP + skills). Registry tools stay out.
-  var localNames = Object.keys(state.mcpTools);
+  // "All Tools" = local tools (MCP + skills + toolsets). Registry tools stay out.
+  var mcpNames = Object.keys(state.mcpTools);
+  var tsNames = Object.keys(state.toolsetTools);
+  var localNames = mcpNames.concat(tsNames);
   var localCount = localNames.length;
 
   if (localCount === 0) {
@@ -898,7 +1089,8 @@ async function refreshTools() {
 
   var primary = 0, secondary = 0, hidden = 0;
   localNames.forEach(function (n) {
-    var exp = (state.mcpTools[n] && state.mcpTools[n].exposure) || 'secondary';
+    var t = state.mcpTools[n] || state.toolsetTools[n] || {};
+    var exp = t.exposure || 'secondary';
     if (exp === 'primary') primary++;
     else if (exp === 'hidden') hidden++;
     else secondary++;
@@ -907,8 +1099,13 @@ async function refreshTools() {
     localCount + ' local tools'
     + ' — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
 
+  // Build merged tool map: MCP takes priority, then toolsets
+  var merged = {};
+  tsNames.forEach(function (n) { merged[n] = state.toolsetTools[n]; });
+  mcpNames.forEach(function (n) { merged[n] = state.mcpTools[n]; });
+
   list.innerHTML = localNames.map(function (name) {
-    return renderToolRow(name, state.mcpTools[name]);
+    return renderToolRow(name, merged[name] || {});
   }).join('');
 }
 
