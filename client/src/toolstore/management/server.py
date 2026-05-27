@@ -34,8 +34,6 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 import shutil
 
 from ..config_manager import ConfigManager
@@ -56,61 +54,64 @@ _DEFAULT_CFG: dict[str, Any] = {
 
 
 # ============================================================================
-# Config I/O  (single source of truth: ~/.toolstore/config.yaml)
+# Config I/O  (single source of truth: config.json, shared with CLI)
 # ============================================================================
 
-def _config_dir() -> Path:
-    p = ConfigManager().config_dir
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+# Internal key we normalise to for the SPA (snake_case).
+# ConfigManager (CLI) uses "mcpServers" (camelCase) in config.json.
+
+_SPA_MCP_KEY = "mcp_servers"
+_CLI_MCP_KEY = "mcpServers"
 
 
-def _config_path() -> Path:
-    return _config_dir() / "config.yaml"
+def _config_manager() -> ConfigManager:
+    """Return a ConfigManager that respects TOOLSTORE_HOME."""
+    cm = ConfigManager()
+    cm.load()
+    return cm
 
 
 def load_config() -> dict:
-    """Load ``config.yaml``, normalising keys to what the SPA expects."""
+    """Load ``config.json`` and normalise keys for the SPA.
+
+    The CLI writes ``mcpServers`` (camelCase) but the SPA expects
+    ``mcp_servers`` (snake_case).  We normalise on read + write so both
+    consumers share the same file.
+    """
     cfg = dict(_DEFAULT_CFG)
-    cp = _config_path()
-    if cp.exists():
-        try:
-            raw = yaml.safe_load(cp.read_text()) or {}
-            # ConfigManager stores MCP servers under "mcpServers";
-            # we normalise to "mcp_servers" everywhere.
-            if "mcpServers" in raw:
-                cfg["mcp_servers"] = raw["mcpServers"]
-            if "mcp_servers" in raw:
-                cfg["mcp_servers"] = raw["mcp_servers"]
-            for k in ("tools", "skills"):
-                if k in raw:
-                    cfg[k] = raw[k]
-        except (yaml.YAMLError, OSError):
-            pass
-    # Ensure "mcp_servers" key
-    if "mcp_servers" not in cfg:
-        cfg["mcp_servers"] = {}
+    cm = _config_manager()
+
+    # Normalise mcpServers (CLI) → mcp_servers (SPA)
+    cli_servers = cm.config.get(_CLI_MCP_KEY, {})
+    if cli_servers:
+        cfg[_SPA_MCP_KEY] = dict(cli_servers)
+
+    # Copy SPA-specific keys if present
+    for k in ("tools", "skills"):
+        if k in cm.config:
+            cfg[k] = cm.config[k]
+
     return cfg
 
 
 def save_config(cfg: dict) -> None:
-    """Write config back to ``config.yaml``.
+    """Persist SPA state back to ``config.json``.
 
-    ``mcp_servers`` is written as ``mcpServers`` for ConfigManager compatibility.
+    Writes ``mcp_servers`` (SPA) → ``mcpServers`` (CLI) so both the
+    management UI and the CLI see the same MCP servers.
     """
-    cp = _config_path()
-    out: dict[str, Any] = {
-        # ConfigManager reads this key
-        "mcpServers": cfg.get("mcp_servers", {}),
-    }
-    # Preserve any other top-level keys ConfigManager might use
-    raw_servers = cfg.get("mcp_servers", {})
-    if raw_servers:
-        out["mcpServers"] = raw_servers
-    # Our extensions
-    out["tools"] = cfg.get("tools", {})
-    out["skills"] = cfg.get("skills", {})
-    cp.write_text(yaml.safe_dump(out, default_flow_style=False, allow_unicode=True))
+    cm = _config_manager()
+
+    # Normalise back: mcp_servers (SPA) → mcpServers (CLI)
+    spa_servers = cfg.get(_SPA_MCP_KEY, {})
+    if spa_servers:
+        cm.config[_CLI_MCP_KEY] = dict(spa_servers)
+
+    # Store SPA extensions alongside CLI keys
+    cm.config["tools"] = cfg.get("tools", {})
+    cm.config["skills"] = cfg.get("skills", {})
+
+    cm.save()
 
 
 # ============================================================================
@@ -145,7 +146,13 @@ def _start_mcp_folder(server_id: str, srv: dict) -> bool:
 
 
 def _connect_and_discover(server_id: str, srv: dict) -> list[dict]:
-    transport_type = srv.get("transport", "sse")
+    # Detect transport: explicit key → has command+args → has url → "sse"
+    transport_type = srv.get("transport") or srv.get("type")
+    if not transport_type:
+        if srv.get("command"):
+            transport_type = "stdio"
+        else:
+            transport_type = "sse"
     if transport_type == "folder":
         _start_mcp_folder(server_id, srv)
         time.sleep(1.5)
@@ -171,8 +178,13 @@ def _connect_and_discover(server_id: str, srv: dict) -> list[dict]:
     client.connect()
     tools_info = client.list_tools()
     _connected_clients[server_id] = client
+    # list_tools() returns {"tools": [...]} — extract the list
+    if isinstance(tools_info, dict):
+        tool_list = tools_info.get("tools", [])
+    else:
+        tool_list = tools_info if isinstance(tools_info, list) else []
     tools: list[dict] = []
-    for t in tools_info:
+    for t in tool_list:
         tools.append({
             "name": t.get("name", ""),
             "description": t.get("description", ""),

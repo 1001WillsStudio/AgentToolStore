@@ -4,10 +4,19 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 
+# Well-known persistent path inside the Docker container (mounted volume).
+_DOCKER_PERSISTENT_DIR = Path("/app/data/toolstore")
+
+
 class ConfigManager:
     def __init__(self, config_dir: Optional[Path] = None):
         if config_dir:
-            self.config_dir = config_dir
+            self.config_dir = Path(config_dir)
+        elif os.environ.get("TOOLSTORE_HOME"):
+            self.config_dir = Path(os.environ["TOOLSTORE_HOME"])
+        elif _DOCKER_PERSISTENT_DIR.exists() or _DOCKER_PERSISTENT_DIR.parent.exists():
+            # Docker container with persistent volume mount — use it
+            self.config_dir = _DOCKER_PERSISTENT_DIR
         else:
             self.config_dir = Path.home() / ".toolstore"
 

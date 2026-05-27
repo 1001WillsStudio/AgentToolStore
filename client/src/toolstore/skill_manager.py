@@ -171,15 +171,49 @@ class SkillDefinition:
 
         return len(self.errors) == 0
 
-    def list_files(self) -> List[Path]:
+    def list_files(self) -> List[str]:
         """List all additional files bundled with the skill (excluding SKILL.md)."""
         files = []
         if not self.skill_dir.is_dir():
             return files
         for f in self.skill_dir.rglob("*"):
             if f.is_file() and f.name != "SKILL.md":
-                files.append(f.relative_to(self.skill_dir))
+                files.append(str(f.relative_to(self.skill_dir)))
         return sorted(files)
+
+    # ------------------------------------------------------------------
+    # Convenience accessors for standard subdirectories
+    # ------------------------------------------------------------------
+
+    def _dir(self, subdir: str) -> Path:
+        """Return the path to a standard subdirectory (may not exist)."""
+        return self.skill_dir / subdir
+
+    def _list_dir(self, subdir: str) -> list[str]:
+        """List files inside a standard subdirectory, relative to the skill root."""
+        d = self._dir(subdir)
+        if not d.is_dir():
+            return []
+        result = []
+        for f in sorted(d.rglob("*")):
+            if f.is_file():
+                result.append(str(f.relative_to(self.skill_dir)))
+        return result
+
+    @property
+    def references(self) -> list[str]:
+        """List files inside ``references/``, relative to skill root."""
+        return self._list_dir("references")
+
+    @property
+    def scripts(self) -> list[str]:
+        """List files inside ``scripts/``, relative to skill root."""
+        return self._list_dir("scripts")
+
+    @property
+    def assets(self) -> list[str]:
+        """List files inside ``assets/``, relative to skill root."""
+        return self._list_dir("assets")
 
     def to_tool_definition(self) -> Dict[str, Any]:
         """Convert to a ToolStore-compatible tool definition (type: skill).
@@ -206,12 +240,15 @@ class SkillDefinition:
                             "type": "string",
                             "description": "Script to run from scripts/ dir (for action='run')",
                         },
-                        "action": {
+            "action": {
                             "type": "string",
-                            "enum": ["load", "files", "file", "run"],
-                            "description": "load = read full SKILL.md, "
-                                           "files = list bundled files, "
-                                           "file = read a specific file",
+                            "enum": ["load", "files", "file", "run", "list-references", "read-reference"],
+                            "description": "load = read full SKILL.md body (progressive disclosure), "
+                                           "files = list all bundled files (references/ + scripts/ + assets/), "
+                                           "file = read a specific file by path, "
+                                           "run = execute a script from scripts/, "
+                                           "list-references = list files in references/, "
+                                           "read-reference = read a reference file",
                         },
                         "file_path": {
                             "type": "string",
