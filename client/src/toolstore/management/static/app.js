@@ -12,6 +12,8 @@ let state = {
   mcpServers: {},
   skills: {},
   tools: {},
+  mcpTools: {},
+  registryTools: {},
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -35,6 +37,7 @@ const api = {
     return data;
   },
   getConfig()           { return this._fetch('GET', '/api/config'); },
+  listTools()           { return this._fetch('GET', '/api/tools'); },
   listMcp()             { return this._fetch('GET', '/api/mcp/servers'); },
   addMcp(cfg)           { return this._fetch('POST', '/api/mcp/servers', cfg); },
   connectMcp(id)        { return this._fetch('POST', `/api/mcp/servers/${id}/connect`); },
@@ -129,6 +132,17 @@ async function loadAll() {
     state.tools = state.config.tools || {};
     state.skills = state.config.skills || {};
     state.mcpServers = await api.listMcp();
+    // Fetch categorized tools from /api/tools
+    try {
+      var categorized = await api.listTools();
+      state.mcpTools = categorized.mcp || {};
+      state.registryTools = categorized.registry || {};
+      // Merge all into state.tools for rendering (registry tools may not be in config yet)
+      Object.assign(state.tools, state.registryTools);
+    } catch (_) {
+      state.mcpTools = {};
+      state.registryTools = {};
+    }
     updateStatus('ok', 'connected');
   } catch (e) {
     updateStatus('error', 'server unreachable');
@@ -861,12 +875,23 @@ function selectBrowserPath(path) {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function refreshTools() {
+  // Re-fetch categorized tools to keep counts fresh
+  try {
+    var categorized = await api.listTools();
+    state.mcpTools = categorized.mcp || {};
+    state.registryTools = categorized.registry || {};
+    Object.assign(state.tools, state.registryTools);
+  } catch (_) { /* keep stale */ }
+
   var list = document.getElementById('tools-list');
   var empty = document.getElementById('tools-empty');
   var summary = document.getElementById('tools-summary');
 
-  var names = Object.keys(state.tools);
-  if (names.length === 0) {
+  var registryCount = Object.keys(state.registryTools).length;
+  var mcpCount = Object.keys(state.mcpTools).length;
+  var total = registryCount + mcpCount;
+
+  if (total === 0) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
     summary.textContent = '';
@@ -874,15 +899,35 @@ async function refreshTools() {
   }
   empty.classList.add('hidden');
 
-  var primary = names.filter(function (n) { return state.tools[n].exposure === 'primary'; }).length;
-  var secondary = names.filter(function (n) { return state.tools[n].exposure === 'secondary'; }).length;
-  var hidden = names.filter(function (n) { return state.tools[n].exposure === 'hidden'; }).length;
-  summary.textContent = names.length + ' tools — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
+  var primary = 0, secondary = 0, hidden = 0;
+  Object.values(state.tools).forEach(function (t) {
+    var exp = t.exposure || 'secondary';
+    if (exp === 'primary') primary++;
+    else if (exp === 'hidden') hidden++;
+    else secondary++;
+  });
+  summary.innerHTML =
+    '<span style="color:var(--ts-success);font-weight:600;">' + registryCount + ' online</span> (registry)'
+    + ' &nbsp;·&nbsp; '
+    + '<span style="color:var(--accent-violet-light);font-weight:600;">' + mcpCount + ' local</span> (MCP + skills)'
+    + ' &nbsp;·&nbsp; '
+    + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
 
-  list.innerHTML = names.map(function (name) {
-    var t = state.tools[name];
-    return renderToolRow(name, t);
-  }).join('');
+  // Build the list: registry tools first, then MCP tools
+  var html = '';
+  if (registryCount > 0) {
+    html += '<div class="ts-section-label" style="padding:12px 0 4px;font-size:13px;color:var(--ts-text-muted);font-weight:600;">📡 Registry (' + registryCount + ')</div>';
+    Object.keys(state.registryTools).forEach(function (name) {
+      html += renderToolRow(name, state.registryTools[name]);
+    });
+  }
+  if (mcpCount > 0) {
+    html += '<div class="ts-section-label" style="padding:12px 0 4px;font-size:13px;color:var(--ts-text-muted);font-weight:600;">💻 Local (' + mcpCount + ')</div>';
+    Object.keys(state.mcpTools).forEach(function (name) {
+      html += renderToolRow(name, state.mcpTools[name]);
+    });
+  }
+  list.innerHTML = html;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
