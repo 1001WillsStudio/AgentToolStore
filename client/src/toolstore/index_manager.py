@@ -10,7 +10,9 @@ class IndexManager:
         if config_dir:
             self.config_dir = config_dir
         else:
-            self.config_dir = Path.home() / ".toolstore"
+            # Use same resolution as ConfigManager — respects TOOLSTORE_HOME
+            from toolstore.config_manager import ConfigManager as _CM
+            self.config_dir = _CM().config_dir
 
         self.index_file = self.config_dir / "index.json"
         self.config_dir.mkdir(parents=True, exist_ok=True)
