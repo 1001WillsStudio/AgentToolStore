@@ -858,35 +858,38 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: tools ───────────────────────────────────────────────────────
 
     def _list_tools(self):
-        """GET /api/tools  — return every registered tool.
+        """GET /api/tools  — return tools organised by source.
 
-        Merges three sources:
-          1. Tools from ``config.json`` (MCP-connected tools)
-          2. Tools from ``index.json`` (registry download via ``toolstore update``)
+        Returns a dict with per-source groups so the UI can display them
+        in separate sections:
+
+            {"mcp": {name: tool, ...}, "registry": {name: tool, ...}}
         """
         cfg = load_config()
-        tools = dict(cfg.get("tools", {}))
+        result: dict[str, dict] = {"mcp": {}, "registry": {}}
 
-        # Merge registry tools from index.json (respects TOOLSTORE_HOME)
+        # 1. MCP-discovered tools (already registered in config by connect)
+        result["mcp"] = cfg.get("tools", {})
+
+        # 2. Registry tools from index.json
         cm = _config_manager()
         index_path = cm.config_dir / "index.json"
         if index_path.exists():
             try:
                 data = json.loads(index_path.read_text())
                 for name, tdef in data.get("tools", {}).items():
-                    if name not in tools:
-                        tools[name] = {
-                            "source": tdef.get("source", "registry"),
-                            "enabled": True,
-                            "exposure": "primary",
-                            "parallel_safe": False,
-                            "subagent_safe": False,
-                            "description": tdef.get("description", ""),
-                        }
+                    result["registry"][name] = {
+                        "source": tdef.get("source", "registry"),
+                        "enabled": True,
+                        "exposure": "primary",
+                        "parallel_safe": False,
+                        "subagent_safe": False,
+                        "description": tdef.get("description", ""),
+                    }
             except Exception:
                 pass
 
-        self._json(tools)
+        self._json(result)
 
     def _patch_tool(self, name: str, body: dict):
         cfg = load_config()
