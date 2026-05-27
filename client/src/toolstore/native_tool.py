@@ -172,6 +172,33 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
     return "\n".join(lines)
 
 
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+def get_secondary_tool_names() -> list[str]:
+    """Return names of all tools and toolsets with exposure == 'secondary'.
+
+    This is the canonical way for agent frameworks to discover which
+    secondary tools should be listed in the system prompt without having
+    to search first.
+    """
+    names: list[str] = []
+
+    toolsets = config_manager.config.get("toolsets", {})
+    if isinstance(toolsets, dict):
+        for name, info in toolsets.items():
+            if isinstance(info, dict) and info.get("exposure") == "secondary":
+                names.append(name)
+
+    tools = config_manager.config.get("tools", {})
+    if isinstance(tools, dict):
+        for name, info in tools.items():
+            if isinstance(info, dict) and info.get("exposure") == "secondary":
+                names.append(name)
+
+    return names
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
     if not tool_name:
         return "Error: 'tool_name' argument is required for execute action."
