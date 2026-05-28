@@ -945,7 +945,7 @@ class _Handler(SimpleHTTPRequestHandler):
                 "error": f"Toolset '{name}' is already installed locally"
             }, 409); return
 
-        exposure = body.get("exposure", "hidden")
+        exposure = body.get("exposure", "secondary")
 
         # If the toolset ships code, create a local directory for it
         code = tdef.get("code") or tdef.get("code_base64")
