@@ -150,6 +150,7 @@ async function loadAll() {
       state.mcpTools = categorized.mcp || {};
       state.registryTools = categorized.registry || {};
       state.toolsetTools = categorized.toolsets || {};
+      state.skillTools = categorized.skills || {};
     } catch (_) {}
     updateStatus('ok', 'connected');
   } catch (e) {
@@ -202,8 +203,8 @@ function renderToolRow(name, tool) {
 async function setExposure(select) {
   var name = select.dataset.tool;
   var next = select.value;
-  // Look up in all tool registries (config, MCP, toolsets)
-  var tool = state.tools[name] || state.mcpTools[name] || state.toolsetTools[name];
+  // Look up in all tool registries (config, MCP, toolsets, skills)
+  var tool = state.tools[name] || state.mcpTools[name] || state.toolsetTools[name] || state.skillTools[name];
   if (!tool) { toast('Tool not found: ' + name, 'error'); return; }
   try {
     await api.patchTool(name, { exposure: next });
@@ -212,6 +213,7 @@ async function setExposure(select) {
     if (state.tools[name]) state.tools[name] = tool;
     if (state.mcpTools[name]) state.mcpTools[name] = tool;
     if (state.toolsetTools[name]) state.toolsetTools[name] = tool;
+    if (state.skillTools[name]) state.skillTools[name] = tool;
     select.className = 'ts-exposure-select ' + next;
     toast(esc(name) + ' → ' + next);
   } catch (e) {
@@ -770,6 +772,7 @@ async function refreshTools() {
     state.mcpTools = categorized.mcp || {};
     state.registryTools = categorized.registry || {};
     state.toolsetTools = categorized.toolsets || {};
+    state.skillTools = categorized.skills || {};
   } catch (_) { /* keep stale */ }
 
   var list = document.getElementById('tools-list');
@@ -778,7 +781,8 @@ async function refreshTools() {
 
   var mcpNames = Object.keys(state.mcpTools);
   var tsNames = Object.keys(state.toolsetTools);
-  var totalCount = mcpNames.length + tsNames.length;
+  var skNames = Object.keys(state.skillTools || {});
+  var totalCount = mcpNames.length + tsNames.length + skNames.length;
 
   if (totalCount === 0) {
     list.innerHTML = '';
@@ -789,18 +793,17 @@ async function refreshTools() {
   empty.classList.add('hidden');
 
   var primary = 0, secondary = 0, hidden = 0;
-  mcpNames.forEach(function (n) {
-    var exp = (state.mcpTools[n] || {}).exposure || 'secondary';
-    if (exp === 'primary') primary++;
-    else if (exp === 'hidden') hidden++;
-    else secondary++;
-  });
-  tsNames.forEach(function (n) {
-    var exp = (state.toolsetTools[n] || {}).exposure || 'secondary';
-    if (exp === 'primary') primary++;
-    else if (exp === 'hidden') hidden++;
-    else secondary++;
-  });
+  function countExposure(names, source) {
+    names.forEach(function (n) {
+      var exp = (source[n] || {}).exposure || 'secondary';
+      if (exp === 'primary') primary++;
+      else if (exp === 'hidden') hidden++;
+      else secondary++;
+    });
+  }
+  countExposure(mcpNames, state.mcpTools);
+  countExposure(tsNames, state.toolsetTools);
+  countExposure(skNames, state.skillTools);
   summary.textContent =
     totalCount + ' tool' + (totalCount !== 1 ? 's' : '')
     + ' — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
@@ -808,6 +811,7 @@ async function refreshTools() {
   var merged = {};
   tsNames.forEach(function (n) { merged[n] = state.toolsetTools[n]; });
   mcpNames.forEach(function (n) { merged[n] = state.mcpTools[n]; });
+  skNames.forEach(function (n) { merged[n] = state.skillTools[n]; });
 
   list.innerHTML = Object.keys(merged).map(function (name) {
     return renderToolRow(name, merged[name] || {});
