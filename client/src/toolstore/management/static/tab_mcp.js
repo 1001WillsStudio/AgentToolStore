@@ -223,3 +223,145 @@ async function runMcpCode() {
     closeModal('modal-mcp'); refreshMcp();
   } catch (e) { toast('Build failed: ' + e.message, 'error'); }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Quick Paste — parse standard MCP config JSON
+// ═══════════════════════════════════════════════════════════════════════
+
+function parseMcpServersJson(text) {
+  try {
+    var parsed = JSON.parse(text);
+    if (!parsed || !parsed.mcpServers || typeof parsed.mcpServers !== 'object') {
+      return [];
+    }
+    var out = [];
+    Object.keys(parsed.mcpServers).forEach(function (key) {
+      var item = parsed.mcpServers[key];
+      if (item && typeof item === 'object') {
+        out = out.concat(normalizeMcpServer(item));
+      }
+    });
+    return out;
+  } catch (_) { return []; }
+}
+
+function normalizeMcpServer(item) {
+  // Handle GitHub-style entries: { "owner/repo": { "transport": "stdio", ... } }
+  // The key becomes the server_id (replacing / with -) if no 'name' field is provided.
+  if (item && typeof item === 'object' && !Array.isArray(item)) {
+    var result = {};
+    Object.keys(item).forEach(function (key) {
+      var val = item[key];
+      if (val && typeof val === 'object' && !Array.isArray(val) && (val.transport || val.command || val.url)) {
+        var cfg = Object.assign({}, val);
+        cfg.server_id = cfg.server_id || cfg.name || key.replace(/\//g, '-');
+        result[cfg.server_id] = cfg;
+      } else if (key === 'transport' || key === 'command' || key === 'url') {
+        result[key] = val;
+      }
+    });
+    // If we detected sub-objects, return them as array
+    var subIds = Object.keys(result).filter(function (k) {
+      return result[k] && typeof result[k] === 'object' && !Array.isArray(result[k]) && (result[k].transport || result[k].command);
+    });
+    if (subIds.length > 0) {
+      return subIds.map(function (k) { return result[k]; });
+    }
+    // Single server: use item directly if it has transport fields
+    if (item.transport || item.command || item.url) {
+      var cfg = Object.assign({}, item);
+      cfg.server_id = cfg.server_id || cfg.name || 'mcp-' + Date.now();
+      return [cfg];
+    }
+  } else if (Array.isArray(item)) {
+    return item.map(function (s) { return s; });
+  }
+  return [];
+}
+
+async function quickConnectMcp() {
+  var textarea = document.getElementById('mcp-quick-text');
+  var text = textarea.value.trim();
+  if (!text) { toast('Paste MCP server JSON first', 'error'); return; }
+
+  var servers = parseMcpServersJson(text);
+  if (servers.length === 0) {
+    // Try parsing as a flat list of server objects
+    try {
+      var parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        servers = parsed.map(function (s) {
+          var c = Object.assign({}, s);
+          if (!c.server_id) c.server_id = c.name || 'mcp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+          return c;
+        });
+      }
+    } catch (_) {}
+  }
+
+  if (servers.length === 0) { toast('Could not parse any MCP servers from the input', 'error'); return; }
+
+  var added = 0, failed = 0;
+  for (var i = 0; i < servers.length; i++) {
+    var srv = servers[i];
+    if (!srv.transport) { failed++; continue; }
+    try {
+      await api.addMcp(srv);
+      added++;
+    } catch (_) { failed++; }
+  }
+
+  toast('Added ' + added + ' server' + (added !== 1 ? 's' : '') + (failed ? ' (' + failed + ' failed)' : ''), failed ? 'error' : 'success');
+  refreshMcp();
+  textarea.value = '';
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MCP form handlers & event listeners
+// ═══════════════════════════════════════════════════════════════════════
+
+// Connect MCP button → opens modal
+document.getElementById('btn-connect-mcp').addEventListener('click', function () {
+  document.getElementById('form-mcp').reset();
+  document.getElementById('mcp-quick-text').value = '';
+  switchMcpMode('quick');
+  showMcpFields('stdio');
+  openModal('modal-mcp');
+});
+
+// MCP form submit (manual mode)
+document.getElementById('form-mcp').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  var fd = new FormData(this);
+  var transport = fd.get('transport') || 'stdio';
+  var cfg = { transport: transport, server_id: (fd.get('server_id') || '').trim() || undefined };
+  if (transport === 'stdio') {
+    cfg.command = fd.get('command') || '';
+    var argsStr = fd.get('args') || '';
+    cfg.args = argsStr ? argsStr.split(/\s+/) : [];
+    cfg.env_vars = fd.get('env_vars') || undefined;
+  } else if (transport === 'sse') {
+    cfg.url = fd.get('url') || '';
+    cfg.headers = fd.get('headers') || undefined;
+  } else if (transport === 'folder') {
+    cfg.folder_path = fd.get('folder_path') || '';
+    cfg.runtime = fd.get('runtime') || 'auto';
+  }
+
+  if (!cfg.server_id) cfg.server_id = 'mcp-' + Date.now();
+
+  try {
+    var res = await api.addMcp(cfg);
+    toast('Added: ' + esc(res.server_id || cfg.server_id));
+    closeModal('modal-mcp');
+    refreshMcp();
+  } catch (err) {
+    toast('Failed: ' + err.message, 'error');
+  }
+});
+
+// Refresh MCP button
+document.getElementById('btn-refresh-mcp').addEventListener('click', function () {
+  refreshMcp();
+  toast('Refreshed');
+});
