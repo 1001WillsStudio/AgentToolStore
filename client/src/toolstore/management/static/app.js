@@ -16,6 +16,7 @@ let state = {
   mcpTools: {},
   registryTools: {},
   toolsetTools: {},
+  onlineToolsets: {},
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -47,15 +48,17 @@ const api = {
   removeMcp(id)         { return this._fetch('DELETE', `/api/mcp/servers/${id}`); },
   listSkills()          { return this._fetch('GET', '/api/skills'); },
   registerSkill(cfg)    { return this._fetch('POST', '/api/skills', cfg); },
-  uploadSkill(payload) { return this._fetch('POST', '/api/skills/upload', payload); },
+  uploadSkill(payload)  { return this._fetch('POST', '/api/skills/upload', payload); },
   registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
   runCode(cfg)          { return this._fetch('POST', '/api/mcp/code', cfg); },
-  listToolsets()       { return this._fetch('GET', '/api/toolsets'); },
+  listToolsets()        { return this._fetch('GET', '/api/toolsets'); },
   registerToolset(cfg)  { return this._fetch('POST', '/api/toolsets', cfg); },
   registerToolsetFolder(cfg) { return this._fetch('POST', '/api/toolsets/folder', cfg); },
   removeToolset(name)   { return this._fetch('DELETE', `/api/toolsets/${name}`); },
+  listRegistryToolsets(){ return this._fetch('GET', '/api/registry/toolsets'); },
+  downloadToolset(cfg)  { return this._fetch('POST', '/api/registry/toolsets/download', cfg); },
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -86,6 +89,7 @@ document.querySelectorAll('.ts-tab').forEach(function (btn) {
     if (tab === 'mcp') refreshMcp();
     if (tab === 'skills') refreshSkills();
     if (tab === 'toolsets') refreshToolsets();
+    if (tab === 'online-toolsets') refreshOnlineToolsets();
     if (tab === 'tools') refreshTools();
   });
 });
@@ -688,21 +692,37 @@ async function refreshToolsets() {
     state.toolsets = toolsets || {};
   } catch (e) { /* keep stale */ }
 
+  // Ensure toolsetTools exposure is synced from config
+  try {
+    var categorized = await api.listTools();
+    state.toolsetTools = categorized.toolsets || {};
+  } catch (_) {}
+
   var list = document.getElementById('toolset-list');
   var empty = document.getElementById('toolset-empty');
+  var summary = document.getElementById('toolsets-summary');
   var names = Object.keys(state.toolsets);
 
   if (names.length === 0) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
+    summary.textContent = '';
     return;
   }
   empty.classList.add('hidden');
+  summary.textContent = names.length + ' toolset' + (names.length !== 1 ? 's' : '') + ' registered';
 
   list.innerHTML = names.map(function (name) {
     var ts = state.toolsets[name];
     var desc = ts.description || '';
     var fnNames = (ts.functions || []).join(', ');
+    var toolMeta = state.toolsetTools[name] || {};
+    var exp = toolMeta.exposure || 'secondary';
+    var optColors = { primary: '#a78bfa', secondary: '#fbbf24', hidden: '#9090a0' };
+    var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
+      var sel = v === exp ? ' selected' : '';
+      return '<option value="' + v + '" style="color:' + optColors[v] + '"' + sel + '>' + v + '</option>';
+    }).join('');
     return '<div class="ts-card">'
       + '<div class="ts-card-header">'
       + '<div>'
@@ -710,6 +730,7 @@ async function refreshToolsets() {
       + '<div class="ts-card-subtitle">' + esc(desc.length > 100 ? desc.slice(0,100) + '…' : desc) + '</div>'
       + '</div>'
       + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<select class="ts-exposure-select ' + exp + '" data-tool="' + escAttr(name) + '" onchange="setToolsetExposure(this)">' + opts + '</select>'
       + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeToolset(\'' + escAttr(name) + '\')">Remove</button>'
       + '</div>'
       + '</div>'
@@ -725,14 +746,36 @@ async function removeToolset(name) {
     delete state.tools['toolset:' + name];
     toast('Removed: ' + esc(name));
     refreshToolsets();
+    // Also refresh All Tools tab if visible later
+    refreshTools();
   } catch (e) {
     toast('Remove failed: ' + e.message, 'error');
+  }
+}
+
+async function setToolsetExposure(select) {
+  var name = select.dataset.tool;
+  var next = select.value;
+  try {
+    await api.patchTool(name, { exposure: next });
+    // Update local state
+    if (state.toolsetTools[name]) state.toolsetTools[name].exposure = next;
+    select.className = 'ts-exposure-select ' + next;
+    toast(esc(name) + ' → ' + next);
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+    select.value = state.toolsetTools[name] ? (state.toolsetTools[name].exposure || 'secondary') : 'secondary';
   }
 }
 
 // ── Toolset modal open/upload/submit ──
 
 var _toolsetUploadFiles = null;
+
+document.getElementById('btn-refresh-toolsets').addEventListener('click', function () {
+  refreshToolsets();
+  toast('Refreshed');
+});
 
 document.getElementById('btn-register-toolset').addEventListener('click', function () {
   document.getElementById('form-toolset').reset();
@@ -1055,6 +1098,73 @@ function selectBrowserPath(path) {
   closeModal('modal-browser');
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// Online Toolsets tab
+// ═══════════════════════════════════════════════════════════════════════
+
+async function refreshOnlineToolsets() {
+  try {
+    state.onlineToolsets = await api.listRegistryToolsets();
+  } catch (e) { /* keep stale */ }
+
+  var list = document.getElementById('online-toolset-list');
+  var empty = document.getElementById('online-toolset-empty');
+  var summary = document.getElementById('online-toolsets-summary');
+  var names = Object.keys(state.onlineToolsets);
+
+  if (names.length === 0) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    summary.textContent = '';
+    return;
+  }
+  empty.classList.add('hidden');
+  summary.textContent = names.length + ' online toolset' + (names.length !== 1 ? 's' : '') + ' available';
+
+  list.innerHTML = names.map(function (name) {
+    var ts = state.onlineToolsets[name];
+    var desc = ts.description || '';
+    var fnNames = (ts.functions || []).join(', ');
+    var version = ts.version ? ' v' + esc(ts.version) : '';
+    return '<div class="ts-card">'
+      + '<div class="ts-card-header">'
+      + '<div>'
+      + '<div class="ts-card-title">' + esc(name) + '<span class="ts-muted" style="font-size:0.75rem;margin-left:6px;">' + version + '</span></div>'
+      + '<div class="ts-card-subtitle">' + esc(desc.length > 120 ? desc.slice(0,120) + '\u2026' : desc) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<span class="ts-badge" style="background:var(--ts-warn);color:#000;font-size:0.7rem;padding:2px 8px;border-radius:999px;">online</span>'
+      + '<button class="ts-btn ts-btn-primary ts-btn-sm" onclick="downloadToolset(\'' + escAttr(name) + '\')">\u2b07 Download</button>'
+      + '</div>'
+      + '</div>'
+      + (fnNames ? '<div class="ts-card-body" style="font-family:var(--font-mono);font-size:0.75rem;">Functions: ' + esc(fnNames) + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+async function downloadToolset(name) {
+  var btn = event && event.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Downloading\u2026'; }
+  try {
+    var res = await api.downloadToolset({ name: name });
+    // Remove from online list, it will appear in local toolsets
+    delete state.onlineToolsets[name];
+    toast('Downloaded: ' + esc(name) + ' \u2192 ' + res.exposure);
+    refreshOnlineToolsets();
+    refreshToolsets();
+    refreshTools();
+  } catch (e) {
+    toast('Download failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '\u2b07 Download'; }
+  }
+}
+
+// Wire up Online Toolsets refresh button
+document.getElementById('btn-refresh-online-toolsets').addEventListener('click', function () {
+  refreshOnlineToolsets();
+  toast('Refreshed');
+});
 
 // ═══════════════════════════════════════════════════════════════════════
 // All Tools tab

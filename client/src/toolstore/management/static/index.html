@@ -41,6 +41,9 @@
   <button class="ts-tab" data-tab="toolsets">
     <span class="ts-tab-icon">🔧</span> Toolsets
   </button>
+  <button class="ts-tab" data-tab="online-toolsets">
+    <span class="ts-tab-icon">🌐</span> Online Toolsets
+  </button>
   <button class="ts-tab" data-tab="tools">
     <span class="ts-tab-icon">🛠️</span> All Tools
   </button>
@@ -79,13 +82,29 @@
   <!-- ═══ Toolsets ═══ -->
   <section id="tab-toolsets" class="ts-tab-panel">
     <div class="ts-toolbar">
+      <span id="toolsets-summary" class="ts-muted"></span>
       <button id="btn-register-toolset" class="ts-btn ts-btn-primary">+ Register Toolset</button>
+      <button id="btn-refresh-toolsets" class="ts-btn ts-btn-ghost" title="Refresh">↻ Refresh</button>
     </div>
     <div id="toolset-list" class="ts-card-list"></div>
     <div id="toolset-empty" class="ts-empty hidden">
       <div class="ts-empty-icon">🔧</div>
       <p class="ts-empty-title">No Toolsets Registered</p>
-      <p class="ts-empty-desc">Register a <code>toolset.py</code> directory to make its functions callable by your agent. Toolsets support both local (in-process) and Docker-based execution.</p>
+      <p class="ts-empty-desc">Register a <code>toolset.py</code> directory or download one from the Online Toolsets tab.</p>
+    </div>
+  </section>
+
+  <!-- ═══ Online Toolsets ═══ -->
+  <section id="tab-online-toolsets" class="ts-tab-panel">
+    <div class="ts-toolbar">
+      <span id="online-toolsets-summary" class="ts-muted"></span>
+      <button id="btn-refresh-online-toolsets" class="ts-btn ts-btn-ghost" title="Refresh from registry">↻ Refresh</button>
+    </div>
+    <div id="online-toolset-list" class="ts-card-list"></div>
+    <div id="online-toolset-empty" class="ts-empty hidden">
+      <div class="ts-empty-icon">🌐</div>
+      <p class="ts-empty-title">No Online Toolsets Available</p>
+      <p class="ts-empty-desc">Online toolsets are published in the ToolStore registry and can be downloaded for local use. Update your index to discover new toolsets.</p>
     </div>
   </section>
 

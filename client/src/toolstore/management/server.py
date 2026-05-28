@@ -263,6 +263,8 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._list_skills()
             elif p == "/api/toolsets":
                 self._list_toolsets()
+            elif p == "/api/registry/toolsets":
+                self._list_registry_toolsets()
             elif p == "/api/files":
                 self._list_files()
             elif p.startswith("/static/"):
@@ -291,6 +293,8 @@ class _Handler(SimpleHTTPRequestHandler):
                 self._register_toolset(body)
             elif p == "/api/toolsets/folder":
                 self._register_toolset_folder(body)
+            elif p == "/api/registry/toolsets/download":
+                self._download_toolset(body)
             elif p.endswith("/connect") and "/api/mcp/servers/" in p:
                 sid = p.rsplit("/", 2)[-2]
                 self._connect_mcp(sid)
@@ -873,6 +877,104 @@ class _Handler(SimpleHTTPRequestHandler):
         del ts[name]
         save_config(cfg)
         self._json({"success": True})
+
+    # ── API: registry toolsets (online) ──────────────────────────────────
+
+    def _list_registry_toolsets(self):
+        """GET /api/registry/toolsets — toolsets from the public index that
+        are not yet installed locally."""
+        cm = _config_manager()
+        index_path = cm.config_dir / "index.json"
+        if not index_path.exists():
+            self._json({})
+            return
+
+        try:
+            data = json.loads(index_path.read_text())
+        except Exception:
+            self._json({})
+            return
+
+        cfg = load_config()
+        local_ts = cfg.get("toolsets", {})
+
+        result = {}
+        for name, tdef in data.get("tools", {}).items():
+            if tdef.get("type") != "toolset":
+                continue
+            if name in local_ts:
+                continue
+            bindings = tdef.get("bindings", {})
+            result[name] = {
+                "description": tdef.get("description", ""),
+                "functions": list(bindings.keys()) if bindings else [],
+                "version": tdef.get("version", ""),
+                "source": tdef.get("source", "public"),
+                "category": tdef.get("category", ""),
+                "exposure": "hidden",
+            }
+
+        self._json(result)
+
+    def _download_toolset(self, body: dict):
+        """POST /api/registry/toolsets/download — install an online
+        toolset from the registry into local toolsets."""
+        name = body.get("name", "").strip()
+        if not name:
+            self._json({"error": "name is required"}, 400); return
+
+        cm = _config_manager()
+        index_path = cm.config_dir / "index.json"
+        if not index_path.exists():
+            self._json({"error": "Registry index not found"}, 404); return
+
+        try:
+            data = json.loads(index_path.read_text())
+        except Exception:
+            self._json({"error": "Failed to read registry index"}, 500); return
+
+        tdef = data.get("tools", {}).get(name)
+        if not tdef or tdef.get("type") != "toolset":
+            self._json({
+                "error": f"Toolset '{name}' not found in registry"
+            }, 404); return
+
+        cfg = load_config()
+        if name in cfg.get("toolsets", {}):
+            self._json({
+                "error": f"Toolset '{name}' is already installed locally"
+            }, 409); return
+
+        exposure = body.get("exposure", "hidden")
+
+        # If the toolset ships code, create a local directory for it
+        code = tdef.get("code") or tdef.get("code_base64")
+        if code:
+            import base64
+            toolsets_root = cm.config_dir / "toolsets"
+            toolset_dir = toolsets_root / name
+            toolset_dir.mkdir(parents=True, exist_ok=True)
+
+            if tdef.get("code_base64"):
+                code = base64.b64decode(code).decode("utf-8")
+
+            (toolset_dir / "toolset.py").write_text(code, encoding="utf-8")
+            cm.add_toolset_dir(str(toolsets_root))
+
+        # Register toolset metadata in config so it survives restarts
+        cfg.setdefault("toolsets", {})
+        cfg["toolsets"][name] = {
+            "source": f"toolset:{name}",
+            "exposure": exposure,
+            "description": tdef.get("description", ""),
+        }
+        save_config(cfg)
+
+        self._json({
+            "success": True,
+            "toolset": name,
+            "exposure": exposure,
+        })
 
     # ── API: run code in Docker ─────────────────────────────────────────
 
