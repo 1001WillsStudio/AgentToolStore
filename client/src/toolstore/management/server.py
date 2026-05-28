@@ -1088,25 +1088,37 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: tools ───────────────────────────────────────────────────────
 
     def _list_tools(self):
-        """GET /api/tools  — return tools organised by source.
-
-        Returns a dict with per-source groups:
-
-            {"mcp": {...}, "registry": {...}, "toolsets": {...}}
-        """
         cfg = load_config()
-        result: dict[str, dict] = {"mcp": {}, "registry": {}, "toolsets": {}}
+        result: dict[str, dict] = {
+            "mcp": {},
+            "registry": {},
+            "toolsets": {},
+        }
 
-        # 1. MCP-discovered tools (already registered in config by connect)
-        result["mcp"] = cfg.get("tools", {})
+        # MCP-discovered tools
+        for tool_name, tool_info in cfg.get("tools", {}).items():
+            source = tool_info.get("source", "")
+            if not source.startswith("mcp:"):
+                continue
+            result["mcp"][tool_name] = {
+                "source": source,
+                "enabled": tool_info.get("enabled", True),
+                "exposure": tool_info.get("exposure", "secondary"),
+                "parallel_safe": tool_info.get("parallel_safe", False),
+                "subagent_safe": tool_info.get("subagent_safe", False),
+                "description": tool_info.get("description", ""),
+            }
 
-        # 2. Registry tools from index.json
+        # Registry tools from index.json
         cm = _config_manager()
         index_path = cm.config_dir / "index.json"
         if index_path.exists():
             try:
                 data = json.loads(index_path.read_text())
                 for name, tdef in data.get("tools", {}).items():
+                    # Don't duplicate MCP tools that are already in config.tools
+                    if name in result["mcp"]:
+                        continue
                     result["registry"][name] = {
                         "source": tdef.get("source", "registry"),
                         "enabled": True,
@@ -1118,7 +1130,7 @@ class _Handler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-        # 3. Toolset tools from local disk
+        # Toolset tools from local disk
         result["toolsets"] = {}
         for name, ts_info in cfg.get("toolsets", {}).items():
             result["toolsets"][name] = {
@@ -1150,6 +1162,7 @@ class _Handler(SimpleHTTPRequestHandler):
                 target[name][k] = body[k]
         save_config(cfg)
         self._json({"success": True, "tool": name})
+
 
     # ── helpers ──────────────────────────────────────────────────────────
 

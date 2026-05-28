@@ -143,17 +143,13 @@ async function loadAll() {
     state.tools = state.config.tools || {};
     state.skills = state.config.skills || {};
     state.mcpServers = await api.listMcp();
-    // Fetch categorized tools from /api/tools (registry counts for status only)
+    // Fetch categorized tools from /api/tools
     try {
       var categorized = await api.listTools();
       state.mcpTools = categorized.mcp || {};
       state.registryTools = categorized.registry || {};
       state.toolsetTools = categorized.toolsets || {};
-    } catch (_) {
-      state.mcpTools = {};
-      state.registryTools = {};
-      state.toolsetTools = {};
-    }
+    } catch (_) {}
     updateStatus('ok', 'connected');
   } catch (e) {
     updateStatus('error', 'server unreachable');
@@ -1171,7 +1167,6 @@ document.getElementById('btn-refresh-online-toolsets').addEventListener('click',
 // ═══════════════════════════════════════════════════════════════════════
 
 async function refreshTools() {
-  // Re-fetch categorized tools to keep counts fresh
   try {
     var categorized = await api.listTools();
     state.mcpTools = categorized.mcp || {};
@@ -1183,13 +1178,11 @@ async function refreshTools() {
   var empty = document.getElementById('tools-empty');
   var summary = document.getElementById('tools-summary');
 
-  // "All Tools" = local tools (MCP + skills + toolsets). Registry tools stay out.
   var mcpNames = Object.keys(state.mcpTools);
   var tsNames = Object.keys(state.toolsetTools);
-  var localNames = mcpNames.concat(tsNames);
-  var localCount = localNames.length;
+  var totalCount = mcpNames.length + tsNames.length;
 
-  if (localCount === 0) {
+  if (totalCount === 0) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
     summary.textContent = '';
@@ -1198,23 +1191,27 @@ async function refreshTools() {
   empty.classList.add('hidden');
 
   var primary = 0, secondary = 0, hidden = 0;
-  localNames.forEach(function (n) {
-    var t = state.mcpTools[n] || state.toolsetTools[n] || {};
-    var exp = t.exposure || 'secondary';
+  mcpNames.forEach(function (n) {
+    var exp = (state.mcpTools[n] || {}).exposure || 'secondary';
+    if (exp === 'primary') primary++;
+    else if (exp === 'hidden') hidden++;
+    else secondary++;
+  });
+  tsNames.forEach(function (n) {
+    var exp = (state.toolsetTools[n] || {}).exposure || 'secondary';
     if (exp === 'primary') primary++;
     else if (exp === 'hidden') hidden++;
     else secondary++;
   });
   summary.textContent =
-    localCount + ' local tools'
+    totalCount + ' tool' + (totalCount !== 1 ? 's' : '')
     + ' — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
 
-  // Build merged tool map: MCP takes priority, then toolsets
   var merged = {};
   tsNames.forEach(function (n) { merged[n] = state.toolsetTools[n]; });
   mcpNames.forEach(function (n) { merged[n] = state.mcpTools[n]; });
 
-  list.innerHTML = localNames.map(function (name) {
+  list.innerHTML = Object.keys(merged).map(function (name) {
     return renderToolRow(name, merged[name] || {});
   }).join('');
 }

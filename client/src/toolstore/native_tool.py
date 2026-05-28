@@ -123,6 +123,31 @@ def _do_info(tool_name: str) -> str:
     if not tool_name:
         return "Error: 'tool_name' argument is required for info action."
 
+    # ── Check if tool_name is an MCP server ─────────────────────────
+    # Reload config so MCP servers registered by other processes are visible.
+    config_manager.load()
+    prefix = f"mcp:{tool_name}"
+    mcp_tools: dict[str, dict] = {}
+    for tname, tinfo in config_manager.config.get("tools", {}).items():
+        if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
+            mcp_tools[tname] = tinfo
+
+    if mcp_tools:
+        functions = []
+        for tname, tinfo in mcp_tools.items():
+            functions.append({
+                "name": tname,
+                "description": tinfo.get("description", ""),
+                "exposure": tinfo.get("exposure", "secondary"),
+            })
+        return json.dumps({
+            "name": tool_name,
+            "type": "mcp_toolset",
+            "description": f"MCP server with {len(mcp_tools)} tool{'s' if len(mcp_tools) != 1 else ''}",
+            "functions": functions,
+        }, indent=2)
+
+    # ── Fallback to index lookup ────────────────────────────────────
     index_manager.load()
     tool = index_manager.get_tool(tool_name)
     if not tool:
@@ -165,7 +190,22 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
         " (use tool_store with action=\"execute\" to call them):"
     )
     lines = [header]
+
+    # ── MCP servers (grouped toolsets) ──────────────────────────────
+    config_manager.load()
+    mcp_tools_by_server: dict[str, list] = {}
+    for tname, tinfo in config_manager.config.get("tools", {}).items():
+        source = tinfo.get("source", "") if isinstance(tinfo, dict) else ""
+        if source.startswith("mcp:"):
+            server = source[4:]
+            mcp_tools_by_server.setdefault(server, []).append(tname)
+
     for name in tool_names:
+        if name in mcp_tools_by_server:
+            tool_count = len(mcp_tools_by_server[name])
+            lines.append(f"- {name} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
+            continue
+
         tool = index_manager.get_tool(name)
         if not tool:
             lines.append(f"- {name}: [NOT FOUND]")
@@ -182,9 +222,8 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
 def get_secondary_tool_names() -> list[str]:
     """Return names of all tools and toolsets with exposure == 'secondary'.
 
-    This is the canonical way for agent frameworks to discover which
-    secondary tools should be listed in the system prompt without having
-    to search first.
+    MCP tools are grouped by server — each server appears as a single
+    toolset-like name rather than listing every individual tool.
 
     Always reloads config from disk so tools registered by external
     processes (e.g. the management UI) are visible immediately.
@@ -192,6 +231,7 @@ def get_secondary_tool_names() -> list[str]:
     config_manager.load()
 
     names: list[str] = []
+    mcp_servers: set[str] = set()
 
     toolsets = config_manager.config.get("toolsets", {})
     if isinstance(toolsets, dict):
@@ -202,8 +242,18 @@ def get_secondary_tool_names() -> list[str]:
     tools = config_manager.config.get("tools", {})
     if isinstance(tools, dict):
         for name, info in tools.items():
-            if isinstance(info, dict) and info.get("exposure") == "secondary":
-                names.append(name)
+            if not isinstance(info, dict):
+                continue
+            if info.get("exposure") != "secondary":
+                continue
+            source = info.get("source", "")
+            if source.startswith("mcp:"):
+                mcp_servers.add(source[4:])  # server id after "mcp:"
+            else:
+                names.append(name)  # skill:xxx, etc.
+
+    # Each MCP server appears as one toolset-like entry
+    names.extend(sorted(mcp_servers))
 
     return names
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
