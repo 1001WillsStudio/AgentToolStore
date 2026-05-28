@@ -115,7 +115,13 @@ function editMcpDisplayName(span) {
 
   function save() {
     var newName = input.value.trim();
-    if (!newName || newName === current) { span.textContent = current; span.style.display = ''; return; }
+    input.remove();
+    span.style.display = '';
+
+    if (!newName || newName === current) {
+      span.textContent = current;
+      return;
+    }
     api.patchMcpServer(serverId, { display_name: newName }).then(function () {
       if (state.mcpServers[serverId]) state.mcpServers[serverId].display_name = newName;
       span.textContent = newName;
@@ -125,9 +131,8 @@ function editMcpDisplayName(span) {
         if (!orig) { var el = document.createElement('span'); el.className = 'ts-muted'; el.style.cssText = 'font-size:0.7rem;'; el.textContent = '(' + serverId + ')'; parent.appendChild(el); }
         else orig.textContent = '(' + serverId + ')';
       } else if (orig) orig.remove();
-      toast('Renamed → ' + esc(newName));
+      toast('Renamed \u2192 ' + esc(newName));
     }).catch(function (e) { toast('Rename failed: ' + e.message, 'error'); span.textContent = current; });
-    span.style.display = '';
   }
 
   input.addEventListener('blur', save);
