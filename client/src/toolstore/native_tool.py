@@ -106,6 +106,7 @@ def _do_search(query: str) -> str:
     if not query:
         return "Error: 'query' argument is required for search action."
 
+    index_manager.load()
     results = index_manager.search(query)
     if not results:
         return f"No tools found for query: '{query}'"
@@ -122,6 +123,7 @@ def _do_info(tool_name: str) -> str:
     if not tool_name:
         return "Error: 'tool_name' argument is required for info action."
 
+    index_manager.load()
     tool = index_manager.get_tool(tool_name)
     if not tool:
         return f"Error: Tool '{tool_name}' not found."
@@ -183,7 +185,12 @@ def get_secondary_tool_names() -> list[str]:
     This is the canonical way for agent frameworks to discover which
     secondary tools should be listed in the system prompt without having
     to search first.
+
+    Always reloads config from disk so tools registered by external
+    processes (e.g. the management UI) are visible immediately.
     """
+    config_manager.load()
+
     names: list[str] = []
 
     toolsets = config_manager.config.get("toolsets", {})
