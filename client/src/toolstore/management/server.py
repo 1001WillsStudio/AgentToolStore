@@ -313,6 +313,9 @@ class _Handler(SimpleHTTPRequestHandler):
             if p.startswith("/api/tools/") and len(p) > len("/api/tools/"):
                 tool_name = p[len("/api/tools/"):]
                 self._patch_tool(tool_name, body)
+            elif p.startswith("/api/mcp/servers/") and len(p) > len("/api/mcp/servers/"):
+                server_id = p[len("/api/mcp/servers/"):]
+                self._patch_mcp_server(server_id, body)
             else:
                 self._json({"error": "Not found"}, 404)
         except Exception as exc:
@@ -404,10 +407,14 @@ class _Handler(SimpleHTTPRequestHandler):
             self._json({"error": "Server already exists"}, 409); return
 
         transport = body.get("transport", "sse")
+        exposure = body.get("exposure", "secondary")
+        display_name = body.get("display_name", "").strip() or sid
         srv: dict[str, Any] = {
             "transport": transport,
             "enabled": body.get("enabled", True),
             "auto_connect": body.get("auto_connect", True),
+            "exposure": exposure,
+            "display_name": display_name,
         }
         if transport == "stdio":
             srv["command"] = body.get("command", "")
@@ -437,7 +444,7 @@ class _Handler(SimpleHTTPRequestHandler):
                     cfg["tools"][tn] = {
                         "source": f"mcp:{sid}",
                         "enabled": True,
-                        "exposure": body.get("exposure_default", "secondary"),
+                        "exposure": exposure,
                         "parallel_safe": False,
                         "subagent_safe": False,
                         "description": t.get("description", ""),
@@ -458,14 +465,16 @@ class _Handler(SimpleHTTPRequestHandler):
         if sid not in servers:
             self._json({"error": "Server not found"}, 404); return
 
-        tools = _connect_and_discover(sid, servers[sid])
+        srv = servers[sid]
+        tools = _connect_and_discover(sid, srv)
+        exposure = srv.get("exposure", "secondary")
         for t in tools:
             tn = t["name"]
             if tn not in cfg.get("tools", {}):
                 cfg["tools"][tn] = {
                     "source": f"mcp:{sid}",
                     "enabled": True,
-                    "exposure": "secondary",
+                    "exposure": exposure,
                     "parallel_safe": False,
                     "subagent_safe": False,
                     "description": t.get("description", ""),
@@ -1162,6 +1171,35 @@ class _Handler(SimpleHTTPRequestHandler):
                 target[name][k] = body[k]
         save_config(cfg)
         self._json({"success": True, "tool": name})
+
+    def _patch_mcp_server(self, server_id: str, body: dict):
+        """PATCH /api/mcp/servers/<id> — update exposure and/or display_name
+        for an MCP server.  Also syncs exposure to every individual tool."""
+        cfg = load_config()
+        servers = cfg.get("mcp_servers", {})
+        if server_id not in servers:
+            self._json({"error": "MCP server not found"}, 404); return
+
+        srv = servers[server_id]
+        updated = {}
+
+        if "exposure" in body:
+            srv["exposure"] = body["exposure"]
+            updated["exposure"] = body["exposure"]
+            prefix = f"mcp:{server_id}"
+            synced = 0
+            for tn, ti in cfg.get("tools", {}).items():
+                if ti.get("source") == prefix:
+                    ti["exposure"] = body["exposure"]
+                    synced += 1
+            updated["tools_synced"] = synced
+
+        if "display_name" in body:
+            srv["display_name"] = body["display_name"].strip()
+            updated["display_name"] = srv["display_name"]
+
+        save_config(cfg)
+        self._json({"success": True, "server": server_id, **updated})
 
 
     # ── helpers ──────────────────────────────────────────────────────────

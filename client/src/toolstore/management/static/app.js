@@ -52,6 +52,7 @@ const api = {
   registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
+  patchMcpServer(id, cfg){ return this._fetch('PATCH', `/api/mcp/servers/${id}`, cfg); },
   runCode(cfg)          { return this._fetch('POST', '/api/mcp/code', cfg); },
   listToolsets()        { return this._fetch('GET', '/api/toolsets'); },
   registerToolset(cfg)  { return this._fetch('POST', '/api/toolsets', cfg); },
@@ -201,6 +202,8 @@ function renderMcpCard(id, srv) {
 
   var statusClass = srv.status || 'disconnected';
   var toolCount = srv.tools_count || 0;
+  var displayName = srv.display_name || id;
+  var exp = srv.exposure || 'secondary';
 
   // Collect tools belonging to this MCP server
   var toolRows = '';
@@ -216,13 +219,23 @@ function renderMcpCard(id, srv) {
     ? '<div class="ts-card-tools">' + toolRows + '</div>'
     : '';
 
+  var optColors = { primary: '#a78bfa', secondary: '#fbbf24', hidden: '#9090a0' };
+  var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
+    var sel = v === exp ? ' selected' : '';
+    return '<option value="' + v + '" style="color:' + optColors[v] + '"' + sel + '>' + v + '</option>';
+  }).join('');
+
   return '<div class="ts-card">'
     + '<div class="ts-card-header">'
-    + '<div>'
-    + '<div class="ts-card-title">' + esc(id) + '</div>'
+    + '<div style="flex:1;">'
+    + '<div class="ts-card-title" style="display:flex;align-items:center;gap:8px;">'
+    + '<span class="ts-editable-label" data-mcp-id="' + escAttr(id) + '" onclick="editMcpDisplayName(this)">' + esc(displayName) + '</span>'
+    + (displayName !== id ? '<span class="ts-muted" style="font-size:0.7rem;">(' + esc(id) + ')</span>' : '')
+    + '</div>'
     + '<div class="ts-card-subtitle">' + esc(transportDetail) + '</div>'
     + '</div>'
     + '<div style="display:flex;align-items:center;gap:8px;">'
+    + '<select class="ts-exposure-select ' + exp + '" data-mcp-server="' + escAttr(id) + '" onchange="setMcpServerExposure(this)">' + opts + '</select>'
     + '<span class="ts-status-badge ' + statusClass + '">' + statusClass + '</span>'
     + '<span class="ts-muted" style="font-size:12px;">' + toolCount + ' tools</span>'
     + '</div>'
@@ -236,6 +249,83 @@ function renderMcpCard(id, srv) {
     + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeMcp(\'' + escAttr(id) + '\')">Remove</button>'
     + '</div>'
     + '</div>';
+}
+
+// ── MCP server exposure & display name ──────────────────────────────
+
+async function setMcpServerExposure(select) {
+  var serverId = select.dataset.mcpServer;
+  var next = select.value;
+  try {
+    var res = await api.patchMcpServer(serverId, { exposure: next });
+    if (state.mcpServers[serverId]) state.mcpServers[serverId].exposure = next;
+    // Also update individual tools in state.tools to match
+    var prefix = 'mcp:' + serverId;
+    Object.keys(state.tools).forEach(function (tn) {
+      if (state.tools[tn].source === prefix) state.tools[tn].exposure = next;
+    });
+    select.className = 'ts-exposure-select ' + next;
+    toast(esc(state.mcpServers[serverId].display_name || serverId) + ' → ' + next + ' (' + (res.tools_synced || 0) + ' tools)');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+    select.value = (state.mcpServers[serverId] || {}).exposure || 'secondary';
+  }
+}
+
+function editMcpDisplayName(span) {
+  var serverId = span.dataset.mcpId;
+  var srv = state.mcpServers[serverId] || {};
+  var current = srv.display_name || serverId;
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.className = 'ts-inline-edit';
+  input.style.cssText = 'font-size:inherit;font-weight:600;color:inherit;background:transparent;border:1px solid var(--accent-violet);border-radius:4px;padding:2px 6px;width:200px;';
+
+  function save() {
+    var newName = input.value.trim();
+    if (!newName || newName === current) {
+      span.textContent = current;
+      span.style.display = '';
+      return;
+    }
+    api.patchMcpServer(serverId, { display_name: newName }).then(function () {
+      if (state.mcpServers[serverId]) state.mcpServers[serverId].display_name = newName;
+      span.textContent = newName;
+      // Show original id if different
+      var parent = span.parentElement;
+      var orig = parent.querySelector('.ts-muted');
+      if (newName !== serverId) {
+        if (!orig) {
+          var el = document.createElement('span');
+          el.className = 'ts-muted';
+          el.style.cssText = 'font-size:0.7rem;';
+          el.textContent = '(' + serverId + ')';
+          parent.appendChild(el);
+        } else {
+          orig.textContent = '(' + serverId + ')';
+        }
+      } else if (orig) {
+        orig.remove();
+      }
+      toast('Renamed → ' + esc(newName));
+    }).catch(function (e) {
+      toast('Rename failed: ' + e.message, 'error');
+      span.textContent = current;
+    });
+    span.style.display = '';
+  }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') { span.textContent = current; span.style.display = ''; }
+  });
+
+  span.style.display = 'none';
+  span.parentElement.insertBefore(input, span.nextSibling);
+  input.focus();
+  input.select();
 }
 
 // ═══════════════════════════════════════════════════════════════════════

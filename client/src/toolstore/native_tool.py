@@ -123,16 +123,42 @@ def _do_info(tool_name: str) -> str:
     if not tool_name:
         return "Error: 'tool_name' argument is required for info action."
 
-    # ── Check if tool_name is an MCP server ─────────────────────────
-    # Reload config so MCP servers registered by other processes are visible.
+    # ── Check if tool_name is an MCP server (by id or display_name) ──
     config_manager.load()
+    servers = config_manager.config.get("mcpServers", {})
+
+    # Try exact server_id match first
     prefix = f"mcp:{tool_name}"
     mcp_tools: dict[str, dict] = {}
     for tname, tinfo in config_manager.config.get("tools", {}).items():
         if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
             mcp_tools[tname] = tinfo
 
+    # Try display_name match
+    if not mcp_tools and isinstance(servers, dict):
+        for sid, srv in servers.items():
+            if isinstance(srv, dict) and srv.get("display_name") == tool_name:
+                prefix = f"mcp:{sid}"
+                for tname, tinfo in config_manager.config.get("tools", {}).items():
+                    if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
+                        mcp_tools[tname] = tinfo
+                if mcp_tools:
+                    # Use the matched server_id for the response
+                    srv_info = srv
+                    break
+
     if mcp_tools:
+        # Get server metadata
+        actual_sid = tool_name
+        srv_info = {}
+        if isinstance(servers, dict):
+            for sid, srv in servers.items():
+                prefix2 = f"mcp:{sid}"
+                if any(ti.get("source") == prefix2 for ti in mcp_tools.values() if isinstance(ti, dict)):
+                    actual_sid = sid
+                    srv_info = srv
+                    break
+
         functions = []
         for tname, tinfo in mcp_tools.items():
             functions.append({
@@ -141,8 +167,10 @@ def _do_info(tool_name: str) -> str:
                 "exposure": tinfo.get("exposure", "secondary"),
             })
         return json.dumps({
-            "name": tool_name,
+            "name": srv_info.get("display_name") or actual_sid,
+            "server_id": actual_sid,
             "type": "mcp_toolset",
+            "exposure": srv_info.get("exposure", "secondary") if isinstance(srv_info, dict) else "secondary",
             "description": f"MCP server with {len(mcp_tools)} tool{'s' if len(mcp_tools) != 1 else ''}",
             "functions": functions,
         }, indent=2)
@@ -200,10 +228,19 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
             server = source[4:]
             mcp_tools_by_server.setdefault(server, []).append(tname)
 
+    # Build display-name lookup for MCP servers
+    servers = config_manager.config.get("mcpServers", {})
+    server_display: dict[str, str] = {}
+    if isinstance(servers, dict):
+        for sid, srv in servers.items():
+            if isinstance(srv, dict):
+                server_display[sid] = srv.get("display_name") or sid
+
     for name in tool_names:
         if name in mcp_tools_by_server:
             tool_count = len(mcp_tools_by_server[name])
-            lines.append(f"- {name} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
+            display = server_display.get(name, name)
+            lines.append(f"- {display} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
             continue
 
         tool = index_manager.get_tool(name)
@@ -223,7 +260,8 @@ def get_secondary_tool_names() -> list[str]:
     """Return names of all tools and toolsets with exposure == 'secondary'.
 
     MCP tools are grouped by server — each server appears as a single
-    toolset-like name rather than listing every individual tool.
+    toolset-like name rather than listing every individual tool.  The
+    server's ``display_name`` is used when set, otherwise the raw server id.
 
     Always reloads config from disk so tools registered by external
     processes (e.g. the management UI) are visible immediately.
@@ -231,7 +269,7 @@ def get_secondary_tool_names() -> list[str]:
     config_manager.load()
 
     names: list[str] = []
-    mcp_servers: set[str] = set()
+    mcp_servers: dict[str, str] = {}  # display_name → server_id
 
     toolsets = config_manager.config.get("toolsets", {})
     if isinstance(toolsets, dict):
@@ -248,12 +286,19 @@ def get_secondary_tool_names() -> list[str]:
                 continue
             source = info.get("source", "")
             if source.startswith("mcp:"):
-                mcp_servers.add(source[4:])  # server id after "mcp:"
+                server_id = source[4:]
+                mcp_srv = config_manager.config.get("mcpServers", {}).get(server_id, {})
+                if isinstance(mcp_srv, dict):
+                    display = mcp_srv.get("display_name") or server_id
+                    if mcp_srv.get("exposure", "secondary") == "secondary":
+                        mcp_servers[display] = server_id
+                else:
+                    mcp_servers[server_id] = server_id
             else:
                 names.append(name)  # skill:xxx, etc.
 
-    # Each MCP server appears as one toolset-like entry
-    names.extend(sorted(mcp_servers))
+    # Each MCP server appears as one toolset-like entry, using its display_name
+    names.extend(sorted(mcp_servers.keys()))
 
     return names
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
