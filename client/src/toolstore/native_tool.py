@@ -273,18 +273,27 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
     # Build display-name lookup for MCP servers
     servers = config_manager.config.get("mcpServers", {})
     server_display: dict[str, str] = {}
+    display_to_server: dict[str, str] = {}  # reverse lookup for _do_secondary_prompt
     if isinstance(servers, dict):
         for sid, srv in servers.items():
             if isinstance(srv, dict):
-                server_display[sid] = srv.get("display_name") or sid
+                dname = srv.get("display_name") or sid
+                server_display[sid] = dname
+                display_to_server[dname] = sid
 
     for name in tool_names:
+        # Direct server-id match (e.g. "echo-server")
         if name in mcp_tools_by_server:
             tool_count = len(mcp_tools_by_server[name])
             display = server_display.get(name, name)
             lines.append(f"- {display} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
             continue
-
+        # display_name match (e.g. "Echo Service")
+        if name in display_to_server:
+            sid = display_to_server[name]
+            tool_count = len(mcp_tools_by_server.get(sid, []))
+            lines.append(f"- {name} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
+            continue
         tool = index_manager.get_tool(name)
         if not tool:
             lines.append(f"- {name}: [NOT FOUND]")
@@ -331,7 +340,11 @@ def get_secondary_tool_names() -> list[str]:
             if source.startswith("mcp:"):
                 server_id = source[4:]
                 mcp_srv = servers.get(server_id, {}) if isinstance(servers, dict) else {}
-                if isinstance(mcp_srv, dict):
+                if isinstance(mcp_srv, dict) and mcp_srv.get("mode", "toolset") == "individual":
+                    # Individual mode: each tool appears as its own entry
+                    names.append(name)
+                elif isinstance(mcp_srv, dict):
+                    # Toolset mode: group by server display_name
                     display = mcp_srv.get("display_name") or server_id
                     if mcp_srv.get("exposure", "secondary") == "secondary":
                         mcp_servers[display] = server_id
@@ -343,9 +356,12 @@ def get_secondary_tool_names() -> list[str]:
     # ── Also include MCP servers whose server-level exposure is secondary,
     # even if their individual tools are hidden (the agent can discover
     # tools via tool_store info when it needs the server).
+    # Only applies to toolset-mode servers.
     if isinstance(servers, dict):
         for sid, srv in servers.items():
             if not isinstance(srv, dict):
+                continue
+            if srv.get("mode", "toolset") != "toolset":
                 continue
             if srv.get("exposure", "secondary") != "secondary":
                 continue

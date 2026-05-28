@@ -445,10 +445,41 @@ class _Handler(SimpleHTTPRequestHandler):
     def _list_tools(self):
         import json
         cfg = api_mcp.load_config()
-        result = {"mcp": {}, "registry": {}, "toolsets": {}, "skills": {}}
+        servers = cfg.get("mcpServers", {})
+        result = {"mcp": {}, "mcp_toolsets": {}, "registry": {}, "toolsets": {}, "skills": {}}
+
+        # ── MCP toolset entries (toolset-mode servers grouped as one card) ──
+        if isinstance(servers, dict):
+            for sid, srv in servers.items():
+                if srv.get("mode", "toolset") != "toolset":
+                    continue
+                prefix = f"mcp:{sid}"
+                fn_names = []
+                for tn, ti in cfg.get("tools", {}).items():
+                    if isinstance(ti, dict) and ti.get("source") == prefix:
+                        fn_names.append(tn)
+                if fn_names:
+                    display = srv.get("display_name") or sid
+                    result["mcp_toolsets"][display] = {
+                        "source": f"mcp:{sid}",
+                        "server_id": sid,
+                        "enabled": True,
+                        "exposure": srv.get("exposure", "secondary"),
+                        "parallel_safe": False,
+                        "subagent_safe": False,
+                        "description": srv.get("description", "") or f"MCP server with {len(fn_names)} tool{'s' if len(fn_names) != 1 else ''}",
+                        "functions": fn_names,
+                    }
+
+        # ── Individual tools ──
         for tn, ti in cfg.get("tools", {}).items():
             src = ti.get("source", "")
             if src.startswith("mcp:"):
+                sid = src[4:]
+                srv = servers.get(sid, {}) if isinstance(servers, dict) else {}
+                # Skip tools from toolset-mode servers (they're in mcp_toolsets)
+                if srv.get("mode", "toolset") == "toolset":
+                    continue
                 result["mcp"][tn] = {
                     "source": src, "enabled": ti.get("enabled", True),
                     "exposure": ti.get("exposure", "secondary"),
@@ -488,7 +519,15 @@ class _Handler(SimpleHTTPRequestHandler):
         tools = cfg.setdefault("tools", {})
         toolsets = cfg.setdefault("toolsets", {})
         target = tools if name in tools else (toolsets if name in toolsets else None)
-        if target is None: return self._json({"error": "Tool not found"}, 404)
+        if target is None:
+            # Check if name matches an MCP server's display_name or server_id
+            servers = cfg.get("mcpServers", {})
+            if isinstance(servers, dict):
+                for sid, srv in servers.items():
+                    if srv.get("display_name") == name or sid == name:
+                        res, code = api_mcp.patch_mcp_server(sid, body)
+                        return self._json(res, code)
+            return self._json({"error": "Tool not found"}, 404)
         for k in ("exposure", "enabled", "parallel_safe", "subagent_safe"):
             if k in body: target[name][k] = body[k]
         api_mcp.save_config(cfg)

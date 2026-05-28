@@ -44,6 +44,7 @@ def add_mcp_server(body: dict) -> dict:
         return {"error": "Server already exists"}, 409
 
     transport = body.get("transport", "sse")
+    mode = body.get("mode", "toolset")  # "toolset" or "individual"
     exposure = body.get("exposure", "secondary")
     display_name = body.get("display_name", "").strip() or sid
     srv: dict[str, Any] = {
@@ -52,7 +53,13 @@ def add_mcp_server(body: dict) -> dict:
         "auto_connect": body.get("auto_connect", True),
         "exposure": exposure,
         "display_name": display_name,
+        "mode": mode,
     }
+    # When mode is "toolset", individual tools are hidden; server-level
+    # exposure controls visibility of the whole server as a grouped toolset.
+    # When mode is "individual", each tool has its own exposure and the
+    # server-level exposure is irrelevant.
+    tool_exposure = "hidden" if mode == "toolset" else exposure
     if transport == "stdio":
         srv["command"] = body.get("command", "")
         srv["args"] = body.get("args", [])
@@ -81,7 +88,7 @@ def add_mcp_server(body: dict) -> dict:
                 cfg["tools"][tn] = {
                     "source": f"mcp:{sid}",
                     "enabled": True,
-                    "exposure": exposure,
+                    "exposure": tool_exposure,
                     "parallel_safe": False,
                     "subagent_safe": False,
                     "description": t.get("description", ""),
@@ -106,14 +113,16 @@ def connect_mcp_server(sid: str) -> dict:
 
     srv = servers[sid]
     tools = connect_and_discover(sid, srv)
+    mode = srv.get("mode", "toolset")
     exposure = srv.get("exposure", "secondary")
+    tool_exposure = "hidden" if mode == "toolset" else exposure
     for t in tools:
         tn = t["name"]
         if tn not in cfg.get("tools", {}):
             cfg["tools"][tn] = {
                 "source": f"mcp:{sid}",
                 "enabled": True,
-                "exposure": exposure,
+                "exposure": tool_exposure,
                 "parallel_safe": False,
                 "subagent_safe": False,
                 "description": t.get("description", ""),
@@ -154,16 +163,38 @@ def patch_mcp_server(server_id: str, body: dict) -> dict:
     srv = servers[server_id]
     updated = {}
 
+    if "mode" in body:
+        new_mode = body["mode"]
+        if new_mode not in ("toolset", "individual"):
+            return {"error": "mode must be 'toolset' or 'individual'"}, 400
+        old_mode = srv.get("mode", "toolset")
+        srv["mode"] = new_mode
+        updated["mode"] = new_mode
+        prefix = f"mcp:{server_id}"
+        if new_mode == "toolset" and old_mode != "toolset":
+            # Switching to toolset: hide all individual tools
+            for tn, ti in cfg.get("tools", {}).items():
+                if isinstance(ti, dict) and ti.get("source") == prefix:
+                    ti["exposure"] = "hidden"
+        elif new_mode == "individual" and old_mode != "individual":
+            # Switching to individual: restore tools to server's exposure
+            exp = srv.get("exposure", "secondary")
+            for tn, ti in cfg.get("tools", {}).items():
+                if isinstance(ti, dict) and ti.get("source") == prefix:
+                    ti["exposure"] = exp
+
     if "exposure" in body:
         srv["exposure"] = body["exposure"]
         updated["exposure"] = body["exposure"]
         prefix = f"mcp:{server_id}"
-        synced = 0
-        for tn, ti in cfg.get("tools", {}).items():
-            if ti.get("source") == prefix:
-                ti["exposure"] = body["exposure"]
-                synced += 1
-        updated["tools_synced"] = synced
+        # Only sync tool exposures when mode is "individual"
+        if srv.get("mode", "toolset") == "individual":
+            synced = 0
+            for tn, ti in cfg.get("tools", {}).items():
+                if isinstance(ti, dict) and ti.get("source") == prefix:
+                    ti["exposure"] = body["exposure"]
+                    synced += 1
+            updated["tools_synced"] = synced
 
     if "display_name" in body:
         srv["display_name"] = body["display_name"].strip()

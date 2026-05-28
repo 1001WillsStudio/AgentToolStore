@@ -14,6 +14,7 @@ let state = {
   toolsets: {},
   tools: {},
   mcpTools: {},
+  mcpToolsetTools: {},   // MCP servers in "toolset" mode (grouped)
   registryTools: {},
   toolsetTools: {},
   onlineToolsets: {},
@@ -148,6 +149,7 @@ async function loadAll() {
     try {
       var categorized = await api.listTools();
       state.mcpTools = categorized.mcp || {};
+      state.mcpToolsetTools = categorized.mcp_toolsets || {};
       state.registryTools = categorized.registry || {};
       state.toolsetTools = categorized.toolsets || {};
       state.skillTools = categorized.skills || {};
@@ -203,6 +205,20 @@ function renderToolRow(name, tool) {
 async function setExposure(select) {
   var name = select.dataset.tool;
   var next = select.value;
+  // Check MCP toolset entries first (they use patchMcpServer, not patchTool)
+  var mcpTs = state.mcpToolsetTools[name];
+  if (mcpTs && mcpTs.server_id) {
+    try {
+      await api.patchMcpServer(mcpTs.server_id, { exposure: next });
+      mcpTs.exposure = next;
+      select.className = 'ts-exposure-select ' + next;
+      toast(esc(name) + ' → ' + next);
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error');
+      select.value = mcpTs.exposure || 'secondary';
+    }
+    return;
+  }
   // Look up in all tool registries (config, MCP, toolsets, skills)
   var tool = state.tools[name] || state.mcpTools[name] || state.toolsetTools[name] || state.skillTools[name];
   if (!tool) { toast('Tool not found: ' + name, 'error'); return; }
@@ -770,6 +786,7 @@ async function refreshTools() {
   try {
     var categorized = await api.listTools();
     state.mcpTools = categorized.mcp || {};
+    state.mcpToolsetTools = categorized.mcp_toolsets || {};
     state.registryTools = categorized.registry || {};
     state.toolsetTools = categorized.toolsets || {};
     state.skillTools = categorized.skills || {};
@@ -780,9 +797,10 @@ async function refreshTools() {
   var summary = document.getElementById('tools-summary');
 
   var mcpNames = Object.keys(state.mcpTools);
+  var mcpTsNames = Object.keys(state.mcpToolsetTools);
   var tsNames = Object.keys(state.toolsetTools);
   var skNames = Object.keys(state.skillTools || {});
-  var totalCount = mcpNames.length + tsNames.length + skNames.length;
+  var totalCount = mcpNames.length + mcpTsNames.length + tsNames.length + skNames.length;
 
   if (totalCount === 0) {
     list.innerHTML = '';
@@ -802,20 +820,50 @@ async function refreshTools() {
     });
   }
   countExposure(mcpNames, state.mcpTools);
+  countExposure(mcpTsNames, state.mcpToolsetTools);
   countExposure(tsNames, state.toolsetTools);
   countExposure(skNames, state.skillTools);
   summary.textContent =
     totalCount + ' tool' + (totalCount !== 1 ? 's' : '')
     + ' — ' + primary + ' primary, ' + secondary + ' secondary, ' + hidden + ' hidden';
 
+  var html = '';
+
+  // ── MCP toolset entries (grouped servers) ──
+  mcpTsNames.forEach(function (displayName) {
+    var ts = state.mcpToolsetTools[displayName];
+    var exp = ts.exposure || 'secondary';
+    var fnNames = (ts.functions || []).join(', ');
+    var optColors = { primary: '#a78bfa', secondary: '#fbbf24', hidden: '#9090a0' };
+    var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
+      var sel = v === exp ? ' selected' : '';
+      return '<option value="' + v + '" style="color:' + optColors[v] + '"' + sel + '>' + v + '</option>';
+    }).join('');
+    html += '<div class="ts-card">'
+      + '<div class="ts-card-header">'
+      + '<div>'
+      + '<div class="ts-card-title">' + esc(displayName) + ' <span class="ts-badge" style="background:var(--accent-green);color:#fff;font-size:0.65rem;padding:2px 6px;border-radius:999px;">MCP toolset</span></div>'
+      + '<div class="ts-card-subtitle">' + esc(ts.description || '') + '</div>'
+      + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<select class="ts-exposure-select ' + exp + '" data-tool="' + escAttr(displayName) + '" onchange="setExposure(this)">' + opts + '</select>'
+      + '</div>'
+      + '</div>'
+      + (fnNames ? '<div class="ts-card-body" style="font-family:var(--font-mono);font-size:0.75rem;">Functions: ' + esc(fnNames) + '</div>' : '')
+      + '</div>';
+  });
+
+  // ── Individual tools (MCP individual-mode, toolset, skill) ──
   var merged = {};
   tsNames.forEach(function (n) { merged[n] = state.toolsetTools[n]; });
   mcpNames.forEach(function (n) { merged[n] = state.mcpTools[n]; });
   skNames.forEach(function (n) { merged[n] = state.skillTools[n]; });
 
-  list.innerHTML = Object.keys(merged).map(function (name) {
+  html += Object.keys(merged).map(function (name) {
     return renderToolRow(name, merged[name] || {});
   }).join('');
+
+  list.innerHTML = html;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

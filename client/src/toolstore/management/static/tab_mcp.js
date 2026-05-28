@@ -39,23 +39,53 @@ function renderMcpCard(id, srv) {
   var toolCount = srv.tools_count || 0;
   var displayName = srv.display_name || id;
   var exp = srv.exposure || 'secondary';
+  var mode = srv.mode || 'toolset';
+  var isToolsetMode = mode === 'toolset';
 
-  var toolRows = '';
+  // Collect individual tool rows
   var prefix = 'mcp:' + id;
+  var toolRowHTML = '';
   Object.keys(state.tools).forEach(function (tn) {
     var t = state.tools[tn];
-    if (t.source === prefix) toolRows += renderToolRow(tn, t);
+    if (t.source === prefix) toolRowHTML += renderToolRow(tn, t);
   });
 
-  var toolsSection = toolRows
-    ? '<div class="ts-card-tools">' + toolRows + '</div>'
-    : '';
+  // In toolset mode, hide individual tool exposure controls; in individual mode, show them
+  var toolsSection = '';
+  if (toolRowHTML) {
+    if (isToolsetMode) {
+      // Toolset mode: show tool rows without exposure controls (just names)
+      var prefix = 'mcp:' + id;
+      var toolNames = Object.keys(state.tools).filter(function (tn) {
+        return state.tools[tn].source === prefix;
+      });
+      toolsSection = '<div class="ts-card-tools" style="opacity:0.7;">'
+        + '<div style="font-family:var(--font-mono);font-size:0.75rem;padding:6px 12px;">'
+        + '🔧 ' + toolNames.map(function (n) { return esc(n); }).join(', ')
+        + '</div></div>';
+    } else {
+      // Individual mode: full tool rows with exposure controls
+      toolsSection = '<div class="ts-card-tools">' + toolRowHTML + '</div>';
+    }
+  }
 
+  // Exposure dropdown (server-level for toolset mode; hidden for individual mode)
   var optColors = { primary: '#a78bfa', secondary: '#fbbf24', hidden: '#9090a0' };
   var opts = ['primary', 'secondary', 'hidden'].map(function (v) {
     var sel = v === exp ? ' selected' : '';
     return '<option value="' + v + '" style="color:' + optColors[v] + '"' + sel + '>' + v + '</option>';
   }).join('');
+
+  var exposureDropdown = isToolsetMode
+    ? '<select class="ts-exposure-select ' + exp + '" data-mcp-server="' + escAttr(id) + '" onchange="setMcpServerExposure(this)">' + opts + '</select>'
+    : '';
+
+  // Mode toggle switch
+  var modeToggle = '<label class="ts-switch" style="margin-right:4px;" title="' + (isToolsetMode ? 'Switch to individual tools mode' : 'Switch to toolset mode') + '">'
+    + '<input type="checkbox" ' + (mode === 'individual' ? 'checked' : '') + ' onchange="toggleMcpMode(this, \'' + escAttr(id) + '\')">'
+    + '<span class="ts-slider"></span>'
+    + '</label>'
+    + '<span class="ts-badge" style="background:' + (isToolsetMode ? 'var(--accent-green)' : 'var(--accent-violet)') + ';color:#fff;font-size:0.65rem;padding:2px 6px;border-radius:999px;">' + (isToolsetMode ? 'toolset' : 'tools') + '</span>';
 
   return '<div class="ts-card">'
     + '<div class="ts-card-header">'
@@ -67,7 +97,8 @@ function renderMcpCard(id, srv) {
     + '<div class="ts-card-subtitle">' + esc(transportDetail) + '</div>'
     + '</div>'
     + '<div style="display:flex;align-items:center;gap:8px;">'
-    + '<select class="ts-exposure-select ' + exp + '" data-mcp-server="' + escAttr(id) + '" onchange="setMcpServerExposure(this)">' + opts + '</select>'
+    + modeToggle
+    + exposureDropdown
     + '<span class="ts-status-badge ' + statusClass + '">' + statusClass + '</span>'
     + '<span class="ts-muted" style="font-size:12px;">' + toolCount + ' tools</span>'
     + '</div>'
@@ -81,6 +112,24 @@ function renderMcpCard(id, srv) {
     + '<button class="ts-btn ts-btn-danger ts-btn-sm" onclick="removeMcp(\'' + escAttr(id) + '\')">Remove</button>'
     + '</div>'
     + '</div>';
+}
+
+// ── MCP mode toggle (toolset ↔ individual) ───────────────────────────
+
+async function toggleMcpMode(checkbox, serverId) {
+  var newMode = checkbox.checked ? 'individual' : 'toolset';
+  var oldMode = (state.mcpServers[serverId] || {}).mode;
+  try {
+    await api.patchMcpServer(serverId, { mode: newMode });
+    if (state.mcpServers[serverId]) state.mcpServers[serverId].mode = newMode;
+    // Refresh both MCP tab and All Tools tab
+    refreshMcp();
+    toast('Mode: ' + newMode + (newMode === 'toolset' ? ' (tools hidden, server controls exposure)' : ' (each tool controls its own exposure)'));
+    loadAll(); // reload config to get updated tool exposures
+  } catch (e) {
+    toast('Mode switch failed: ' + e.message, 'error');
+    checkbox.checked = !checkbox.checked;  // revert
+  }
 }
 
 // ── MCP server exposure & display name ──────────────────────────────
