@@ -320,6 +320,7 @@ def get_secondary_tool_names() -> list[str]:
                 names.append(name)
 
     tools = config_manager.config.get("tools", {})
+    servers = config_manager.config.get("mcpServers", {})
     if isinstance(tools, dict):
         for name, info in tools.items():
             if not isinstance(info, dict):
@@ -329,7 +330,7 @@ def get_secondary_tool_names() -> list[str]:
             source = info.get("source", "")
             if source.startswith("mcp:"):
                 server_id = source[4:]
-                mcp_srv = config_manager.config.get("mcpServers", {}).get(server_id, {})
+                mcp_srv = servers.get(server_id, {}) if isinstance(servers, dict) else {}
                 if isinstance(mcp_srv, dict):
                     display = mcp_srv.get("display_name") or server_id
                     if mcp_srv.get("exposure", "secondary") == "secondary":
@@ -338,6 +339,19 @@ def get_secondary_tool_names() -> list[str]:
                     mcp_servers[server_id] = server_id
             else:
                 names.append(name)  # skill:xxx, etc.
+
+    # ── Also include MCP servers whose server-level exposure is secondary,
+    # even if their individual tools are hidden (the agent can discover
+    # tools via tool_store info when it needs the server).
+    if isinstance(servers, dict):
+        for sid, srv in servers.items():
+            if not isinstance(srv, dict):
+                continue
+            if srv.get("exposure", "secondary") != "secondary":
+                continue
+            display = srv.get("display_name") or sid
+            if display not in mcp_servers:
+                mcp_servers[display] = sid
 
     # Each MCP server appears as one toolset-like entry, using its display_name
     names.extend(sorted(mcp_servers.keys()))
