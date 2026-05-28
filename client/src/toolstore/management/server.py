@@ -425,11 +425,18 @@ class _Handler(SimpleHTTPRequestHandler):
     def _list_tools(self):
         import json
         cfg = api_mcp.load_config()
-        result = {"mcp": {}, "registry": {}, "toolsets": {}}
+        result = {"mcp": {}, "registry": {}, "toolsets": {}, "skills": {}}
         for tn, ti in cfg.get("tools", {}).items():
             src = ti.get("source", "")
             if src.startswith("mcp:"):
                 result["mcp"][tn] = {
+                    "source": src, "enabled": ti.get("enabled", True),
+                    "exposure": ti.get("exposure", "secondary"),
+                    "parallel_safe": ti.get("parallel_safe", False),
+                    "subagent_safe": ti.get("subagent_safe", False),
+                    "description": ti.get("description", "")}
+            elif src.startswith("skill:"):
+                result["skills"][tn] = {
                     "source": src, "enabled": ti.get("enabled", True),
                     "exposure": ti.get("exposure", "secondary"),
                     "parallel_safe": ti.get("parallel_safe", False),
@@ -440,7 +447,7 @@ class _Handler(SimpleHTTPRequestHandler):
             try:
                 data = json.loads(ip.read_text())
                 for name, tdef in data.get("tools", {}).items():
-                    if name in result["mcp"]: continue
+                    if name in result["mcp"] or name in result["skills"]: continue
                     result["registry"][name] = {
                         "source": tdef.get("source", "registry"),
                         "enabled": True, "exposure": "hidden",

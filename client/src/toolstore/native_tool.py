@@ -106,6 +106,35 @@ def _do_search(query: str) -> str:
 
     index_manager.load()
     results = index_manager.search(query)
+
+    # ── Also scan skill dirs and auto-register matching skills ──
+    config_manager.load()
+    skill_dirs = config_manager.get_skill_dirs()
+    if skill_dirs:
+        from toolstore.skill_manager import get_skill_manager
+        sm = get_skill_manager(skill_dirs)
+        if not sm.list_skill_names():
+            sm.scan()
+        query_lower = query.lower()
+        for skill_name in sm.list_skill_names():
+            sd = sm.get_skill(skill_name)
+            if not sd:
+                continue
+            skill_key = f"skill:{skill_name}"
+            # Check if already in results
+            if any(r.get("name") == skill_key for r in results):
+                continue
+            # Check if matches query
+            desc = sd.description.lower()
+            if (query_lower in skill_name.lower()
+                    or query_lower in desc
+                    or query_lower in skill_key.lower()):
+                # Auto-register in index so future calls find it
+                tool = sd.to_tool_definition()
+                tool["name"] = skill_key
+                index_manager.register_tool(tool)
+                results.append(tool)
+
     if not results:
         return f"No tools found for query: '{query}'"
 
@@ -172,6 +201,23 @@ def _do_info(tool_name: str) -> str:
             "description": f"MCP server with {len(mcp_tools)} tool{'s' if len(mcp_tools) != 1 else ''}",
             "functions": functions,
         }, indent=2)
+
+    # ── Skill:xxx fallback ── scan skill dirs and auto-register ──
+    if tool_name.startswith("skill:"):
+        config_manager.load()
+        config_entry = config_manager.config.get("tools", {}).get(tool_name)
+        if config_entry and isinstance(config_entry, dict):
+            raw_name = tool_name[len("skill:"):]
+            from toolstore.skill_manager import get_skill_manager
+            sm = get_skill_manager(config_manager.get_skill_dirs())
+            if not sm.get_skill(raw_name):
+                sm.scan()
+            sd = sm.get_skill(raw_name)
+            if sd:
+                tool = sd.to_tool_definition()
+                tool["name"] = tool_name
+                index_manager.register_tool(tool)
+                return json.dumps(tool, indent=2)
 
     # ── Fallback to index lookup ────────────────────────────────────
     index_manager.load()
