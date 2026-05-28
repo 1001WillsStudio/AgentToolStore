@@ -69,7 +69,10 @@ def _execute_mcp(tool: Dict[str, Any], args: Dict[str, Any],
 
 def _execute_skill(tool: Dict[str, Any], args: Dict[str, Any],
                    config_manager) -> str:
+    # Strip "skill:" prefix if present (index uses prefixed names)
     skill_name = tool["name"]
+    if skill_name.startswith("skill:"):
+        skill_name = skill_name[len("skill:"):]
     skill_action = args.get("action", "load")
 
     sm = get_skill_manager(config_manager.get_skill_dirs())

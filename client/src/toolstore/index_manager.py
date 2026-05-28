@@ -14,7 +14,8 @@ class IndexManager:
             from toolstore.config_manager import ConfigManager as _CM
             self.config_dir = _CM().config_dir
 
-        self.index_file = self.config_dir / "index.json"
+        self.registry_file = self.config_dir / "registry.json"
+        self._legacy_file = self.config_dir / "index.json"  # pre-rename
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.index_data: Dict[str, Any] = {"meta": {}, "tools": {}}
 
@@ -23,17 +24,22 @@ class IndexManager:
     # ----------------------------------------------------------------
 
     def load(self):
-        """Load index from disk into memory."""
-        if self.index_file.exists():
+        """Load registry from disk into memory.
+        Auto-migrates from old 'index.json' name on first access."""
+        # Migration: if registry.json doesn't exist but index.json does, rename it
+        if not self.registry_file.exists() and self._legacy_file.exists():
+            self._legacy_file.rename(self.registry_file)
+
+        if self.registry_file.exists():
             try:
-                with open(self.index_file, "r", encoding="utf-8") as f:
+                with open(self.registry_file, "r", encoding="utf-8") as f:
                     self.index_data = json.load(f)
             except json.JSONDecodeError:
                 self.index_data = {"meta": {}, "tools": {}}
 
     def save(self):
-        """Save current in-memory index to disk."""
-        with open(self.index_file, "w", encoding="utf-8") as f:
+        """Save current in-memory registry to disk."""
+        with open(self.registry_file, "w", encoding="utf-8") as f:
             json.dump(self.index_data, f, indent=2)
 
     # ----------------------------------------------------------------

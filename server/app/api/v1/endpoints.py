@@ -36,30 +36,30 @@ def read_tool(*, session: Session = Depends(get_session), name: str):
         raise HTTPException(status_code=404, detail="Tool not found")
     return tool
 
-@router.get("/index")
-def get_index(*, session: Session = Depends(get_session)):
+@router.get("/online_index")
+def get_online_index(*, session: Session = Depends(get_session)):
     """
-    Generate the full static index.json for the CLI.
+    Serve the online tool catalogue as JSON.
     This matches the format expected by IndexManager in the client.
     """
     tools = session.exec(select(Tool)).all()
-    
+
     index_tools = {}
     for tool in tools:
         # Convert DB model to the JSON schema expected by CLI
         tool_dict = tool.model_dump()
-        
+
         # Remap fields if necessary (e.g. schema_data -> schema)
         tool_dict["schema"] = tool_dict.pop("schema_data", {})
         tool_dict["auth"] = tool_dict.pop("auth_config", {})
-        
+
         index_tools[tool.name] = tool_dict
-        
+
     return {
         "meta": {
             "version": "1.0",
             "count": len(tools),
-            "last_updated": "2025-11-25" # TODO: Real timestamp
+            "last_updated": "2025-11-25"  # TODO: Real timestamp
         },
         "tools": index_tools
     }

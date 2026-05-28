@@ -20,13 +20,14 @@ class ConfigManager:
         else:
             self.config_dir = Path.home() / ".toolstore"
 
-        self.config_file = self.config_dir / "config.json"
+        self.config_file = self.config_dir / "settings.json"
+        self._legacy_file = self.config_dir / "config.json"  # pre-rename
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config = self._load_defaults()
 
     def _load_defaults(self) -> Dict[str, Any]:
         return {
-            "registry_url": "http://localhost:8000/index.json",
+            "registry_url": "http://localhost:8000/online_index",
             "mcpServers": {},
             "skill_dirs": [],
             "toolset_dirs": [],
@@ -46,6 +47,11 @@ class ConfigManager:
     # ----------------------------------------------------------------
 
     def load(self):
+        """Load settings from disk. Auto-migrates from old 'config.json' name."""
+        # Migration: if settings.json doesn't exist but config.json does, rename it
+        if not self.config_file.exists() and self._legacy_file.exists():
+            self._legacy_file.rename(self.config_file)
+
         if self.config_file.exists():
             try:
                 with open(self.config_file, "r", encoding="utf-8") as f:
@@ -65,7 +71,7 @@ class ConfigManager:
     # ----------------------------------------------------------------
 
     def get_registry_url(self) -> str:
-        return self.config.get("registry_url", "http://localhost:8000/index.json")
+        return self.config.get("registry_url", "http://localhost:8000/online_index")
 
     # ----------------------------------------------------------------
     # MCP servers

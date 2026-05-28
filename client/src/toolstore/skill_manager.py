@@ -453,7 +453,11 @@ class SkillManager:
         elif self._skill_dirs:
             target_base = self._skill_dirs[0]
         else:
-            target_base = Path.home() / ".toolstore" / "installed-skills"
+            # Use the same persistent location as ConfigManager / ToolStore data
+            from toolstore.config_manager import _DOCKER_PERSISTENT_DIR
+            target_base = _DOCKER_PERSISTENT_DIR / "skills" \
+                if _DOCKER_PERSISTENT_DIR.parent.exists() \
+                else Path.home() / ".toolstore" / "installed-skills"
 
         target_base.mkdir(parents=True, exist_ok=True)
         target = target_base / sd.name

@@ -62,7 +62,7 @@ def update():
         
         # Validate it's a list
         if not isinstance(remote_tools, list):
-             # Fallback if wrapped in object (like server's /index.json return format might change)
+             # Fallback if wrapped in object (like server's /online_index return format might change)
             if isinstance(remote_tools, dict) and "tools" in remote_tools:
                  # If it's a dict like {"tools": {...}} convert to list if needed, 
                  # but IndexManager.update_from_remote expects a list of tool dicts.
@@ -283,7 +283,7 @@ def login(
     
     # For V1 MVP, assume registry is at the base of the index URL
     # e.g. http://localhost:8000/index.json -> http://localhost:8000
-    base_url = config_manager.get_registry_url().replace("/index.json", "")
+    base_url = config_manager.get_registry_url().replace("/online_index", "")
     token_url = f"{base_url}/auth/token"
     
     console.print(f"Logging in to {base_url}...")
@@ -337,7 +337,7 @@ def publish(tool_file: str = typer.Argument(..., help="Path to tool.json definit
         raise typer.Exit(1)
         
     # 3. Publish
-    base_url = config_manager.get_registry_url().replace("/index.json", "")
+    base_url = config_manager.get_registry_url().replace("/online_index", "")
     publish_url = f"{base_url}/publish"
     
     console.print(f"Publishing [cyan]{tool_def.get('name')}[/cyan]...")
@@ -374,7 +374,7 @@ def delete(
         raise typer.Exit(1)
         
     # 2. Delete
-    base_url = config_manager.get_registry_url().replace("/index.json", "")
+    base_url = config_manager.get_registry_url().replace("/online_index", "")
     delete_url = f"{base_url}/tools/{tool_name}"
     
     # Confirm action
@@ -740,7 +740,7 @@ def skill_publish(
     if registry:
         base_url = registry.rstrip("/")
     else:
-        base_url = config_manager.get_registry_url().replace("/index.json", "")
+        base_url = config_manager.get_registry_url().replace("/online_index", "")
 
     # ------------------------------------------------------------------
     # Batch mode
@@ -1081,7 +1081,7 @@ def toolset_publish(
         console.print("[yellow]Please login first using 'toolstore login'[/yellow]")
         raise typer.Exit(1)
 
-    base_url = config_manager.get_registry_url().replace("/index.json", "")
+    base_url = config_manager.get_registry_url().replace("/online_index", "")
     publish_url = f"{base_url}/publish"
 
     console.print(f"Publishing [cyan]{td.name}[/cyan] to {base_url}...")
