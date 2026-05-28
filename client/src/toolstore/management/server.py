@@ -266,6 +266,7 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json(result)
 
     def _register_toolset(self, body: dict):
+        import shutil
         from pathlib import Path
         from ..config_manager import ConfigManager
         from ..toolset_manager import ToolsetDefinition
@@ -275,13 +276,22 @@ class _Handler(SimpleHTTPRequestHandler):
         if not ts_path.is_dir(): return self._json({"error": f"Not a directory: {ts_path}"}, 400)
         td = ToolsetDefinition(ts_path)
         if not td.load(): return self._json({"error": "Toolset validation failed", "details": td.errors}, 400)
-        cm = ConfigManager(); cm.load(); cm.add_toolset_dir(str(ts_path.parent))
+        cm = ConfigManager(); cm.load()
+        # Copy into the persistent Docker dir if we're running in Docker,
+        # otherwise just add the parent directory to the search path.
+        persistent_root = cm.config_dir / "toolsets"
+        persistent_root.mkdir(parents=True, exist_ok=True)
+        dest = persistent_root / td.name
+        if not dest.exists():
+            shutil.copytree(ts_path, dest)
+        if str(persistent_root) not in cm.get_toolset_dirs():
+            cm.add_toolset_dir(str(persistent_root))
         cfg = api_mcp.load_config(); cfg.setdefault("toolsets", {})
         cfg["toolsets"][td.name] = {"source": f"toolset:{td.name}",
                                     "description": td.doc[:200] if td.doc else ""}
         api_mcp.save_config(cfg)
         self._json({"success": True, "toolset": td.name,
-                    "functions": list(td.functions.keys()), "path": str(ts_path)})
+                    "functions": list(td.functions.keys()), "path": str(dest)})
 
     def _register_toolset_folder(self, body: dict):
         from pathlib import Path
@@ -304,10 +314,20 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json({"success": True, "registered": registered, "count": count})
 
     def _remove_toolset(self, name: str):
+        import shutil
+        from ..config_manager import ConfigManager
         cfg = api_mcp.load_config()
         if name not in cfg.get("toolsets", {}):
             return self._json({"error": "Toolset not found"}, 404)
         del cfg["toolsets"][name]
+        # Also delete the toolset directory from disk so it doesn't
+        # reappear when the filesystem is rescanned on the next refresh.
+        cm = ConfigManager(); cm.load()
+        for base in cm.get_toolset_dirs():
+            candidate = Path(base) / name
+            if candidate.is_dir():
+                shutil.rmtree(candidate, ignore_errors=True)
+                break
         api_mcp.save_config(cfg)
         self._json({"success": True})
 

@@ -26,7 +26,7 @@ class ConfigManager:
         self.config = self._load_defaults()
 
     def _load_defaults(self) -> Dict[str, Any]:
-        return {
+        defaults = {
             "registry_url": "http://localhost:8000/online_index",
             "mcpServers": {},
             "skill_dirs": [],
@@ -41,6 +41,11 @@ class ConfigManager:
                 "default_image": "quay.io/jupyter/scipy-notebook",
             },
         }
+        # When running in Docker, default skill dir to the persistent volume
+        # so installed skills survive container restarts.
+        if _DOCKER_PERSISTENT_DIR.parent.exists():
+            defaults["skill_dirs"] = [str(_DOCKER_PERSISTENT_DIR / "skills")]
+        return defaults
 
     # ----------------------------------------------------------------
     # Persistence

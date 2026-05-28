@@ -205,19 +205,17 @@ def _do_info(tool_name: str) -> str:
     # ── Skill:xxx fallback ── scan skill dirs and auto-register ──
     if tool_name.startswith("skill:"):
         config_manager.load()
-        config_entry = config_manager.config.get("tools", {}).get(tool_name)
-        if config_entry and isinstance(config_entry, dict):
-            raw_name = tool_name[len("skill:"):]
-            from toolstore.skill_manager import get_skill_manager
-            sm = get_skill_manager(config_manager.get_skill_dirs())
-            if not sm.get_skill(raw_name):
-                sm.scan()
-            sd = sm.get_skill(raw_name)
-            if sd:
-                tool = sd.to_tool_definition()
-                tool["name"] = tool_name
-                index_manager.register_tool(tool)
-                return json.dumps(tool, indent=2)
+        raw_name = tool_name[len("skill:"):]
+        from toolstore.skill_manager import get_skill_manager
+        sm = get_skill_manager(config_manager.get_skill_dirs())
+        if not sm.get_skill(raw_name):
+            sm.scan()
+        sd = sm.get_skill(raw_name)
+        if sd:
+            tool = sd.to_tool_definition()
+            tool["name"] = tool_name
+            index_manager.register_tool(tool)
+            return json.dumps(tool, indent=2)
 
     # ── Fallback to index lookup ────────────────────────────────────
     index_manager.load()
@@ -360,23 +358,20 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
     index_manager.load()
     tool = index_manager.get_tool(tool_name)
 
-    # Fallback: skill:xxx tools may only be registered in config, not index.
-    # Look them up via SkillManager and auto-register if found.
+    # Fallback: skill:xxx tools — scan skill dirs and auto-register if found.
     if not tool and tool_name.startswith("skill:"):
         config_manager.load()
-        config_entry = config_manager.config.get("tools", {}).get(tool_name)
-        if config_entry and isinstance(config_entry, dict):
-            raw_name = tool_name[len("skill:"):]
-            from toolstore.skill_manager import get_skill_manager
-            sm = get_skill_manager(config_manager.get_skill_dirs())
-            if not sm.get_skill(raw_name):
-                sm.scan()
-            sd = sm.get_skill(raw_name)
-            if sd:
-                tool = sd.to_tool_definition()
-                tool["name"] = tool_name  # keep skill: prefix
-                # Auto-register so subsequent calls hit the index
-                index_manager.register_tool(tool)
+        raw_name = tool_name[len("skill:"):]
+        from toolstore.skill_manager import get_skill_manager
+        sm = get_skill_manager(config_manager.get_skill_dirs())
+        if not sm.get_skill(raw_name):
+            sm.scan()
+        sd = sm.get_skill(raw_name)
+        if sd:
+            tool = sd.to_tool_definition()
+            tool["name"] = tool_name  # keep skill: prefix
+            # Auto-register so subsequent calls hit the index
+            index_manager.register_tool(tool)
 
     if not tool:
         return f"Error: Tool '{tool_name}' not found."
