@@ -245,25 +245,19 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: toolsets + registry toolsets ─────────────────────────────
 
     def _list_toolsets(self):
-        from ..config_manager import ConfigManager
-        from ..toolset_manager import get_toolset_manager
-        cm = ConfigManager(); cm.load()
-        dirs = cm.get_toolset_dirs()
-        if not dirs: return self._json({})
-        mgr = get_toolset_manager(dirs); mgr.scan()
+        """Return local toolsets from local_registry.json — the single source of truth."""
+        from ..index_manager import IndexManager
+        im = IndexManager()
+        im.load()
         result = {}
-        for td in mgr.get_all():
-            if not td.is_valid: continue
-            result[td.name] = {
-                "description": td.doc[:200] if td.doc else "",
-                "path": str(td.directory),
-                "functions": list(td.functions.keys())}
-        cfg = api_mcp.load_config(); cfg.setdefault("toolsets", {})
-        for name, info in result.items():
-            if name not in cfg["toolsets"]:
-                cfg["toolsets"][name] = {"source": f"toolset:{name}",
-                                         "description": info["description"]}
-        api_mcp.save_config(cfg)
+        for name, entry in im._local_tools.items():
+            if entry.get("type") != "toolset":
+                continue
+            result[name] = {
+                "description": (entry.get("description") or ""),
+                "path": entry.get("toolset_dir", ""),
+                "functions": list(entry.get("bindings", {}).keys()),
+            }
         self._json(result)
 
     def _register_toolset(self, body: dict):
@@ -285,12 +279,20 @@ class _Handler(SimpleHTTPRequestHandler):
         dest = persistent_root / td.name
         if not dest.exists():
             shutil.copytree(ts_path, dest)
-        if str(persistent_root) not in cm.get_toolset_dirs():
-            cm.add_toolset_dir(str(persistent_root))
-        cfg = api_mcp.load_config(); cfg.setdefault("toolsets", {})
-        cfg["toolsets"][td.name] = {"source": f"toolset:{td.name}",
-                                    "description": td.doc[:200] if td.doc else ""}
-        api_mcp.save_config(cfg)
+        # Register in the local registry (single source of truth)
+        from ..index_manager import IndexManager
+        im = IndexManager()
+        im.load()
+        im._local_tools[td.name] = {
+            "name": td.name,
+            "type": "toolset",
+            "source": "local",
+            "toolset_dir": str(dest),
+            "description": td.doc[:200] if td.doc else "",
+            "doc": td.doc or "",
+            "bindings": td.functions,
+        }
+        im._save_local()
         self._json({"success": True, "toolset": td.name,
                     "functions": list(td.functions.keys()), "path": str(dest)})
 
@@ -304,46 +306,45 @@ class _Handler(SimpleHTTPRequestHandler):
         if not fp.is_dir(): return self._json({"error": f"Not a directory: {fp}"}, 400)
         cm = ConfigManager(); cm.load(); cm.add_toolset_dir(str(fp))
         mgr = get_toolset_manager([str(fp)]); count = mgr.scan()
-        cfg = api_mcp.load_config(); cfg.setdefault("toolsets", {})
+
+        from ..index_manager import IndexManager
+        im = IndexManager()
+        im.load()
         registered = []
         for td in mgr.get_all():
-            if not td.is_valid: continue
-            cfg["toolsets"][td.name] = {"source": f"toolset:{td.name}",
-                                        "description": td.doc[:200] if td.doc else ""}
+            if not td.is_valid:
+                continue
+            im._local_tools[td.name] = {
+                "name": td.name,
+                "type": "toolset",
+                "source": "local",
+                "toolset_dir": str(td.directory),
+                "description": td.doc[:200] if td.doc else "",
+                "doc": td.doc or "",
+                "bindings": td.functions,
+            }
             registered.append(td.name)
-        api_mcp.save_config(cfg)
+        im._save_local()
         self._json({"success": True, "registered": registered, "count": count})
 
     def _remove_toolset(self, name: str):
+        """Remove a local toolset — single source of truth: local_registry.json."""
         import shutil
-        from ..config_manager import ConfigManager
         from ..index_manager import IndexManager
 
-        cfg = api_mcp.load_config()
-        if name not in cfg.get("toolsets", {}):
-            return self._json({"error": "Toolset not found"}, 404)
-        del cfg["toolsets"][name]
-        api_mcp.save_config(cfg)
-
-        cm = ConfigManager(); cm.load()
-
-        # Delete from every configured toolset directory
-        for base in cm.get_toolset_dirs():
-            candidate = Path(base) / name
-            if candidate.is_dir():
-                shutil.rmtree(candidate, ignore_errors=True)
-
-        # Delete the persistent copy that _list_toolsets creates
-        persistent_copy = cm.config_dir / "toolsets" / name
-        if persistent_copy.is_dir():
-            shutil.rmtree(persistent_copy, ignore_errors=True)
-
-        # Remove from the local registry immediately
         im = IndexManager()
         im.load()
-        if name in im._local_tools:
-            del im._local_tools[name]
-            im._save_local()
+        if name not in im._local_tools:
+            return self._json({"error": "Toolset not found"}, 404)
+
+        entry = im._local_tools[name]
+        # Delete the directory on disk
+        ts_dir = entry.get("toolset_dir")
+        if ts_dir:
+            shutil.rmtree(ts_dir, ignore_errors=True)
+        # Remove from the only source of truth
+        del im._local_tools[name]
+        im._save_local()
 
         self._json({"success": True})
 
@@ -374,8 +375,9 @@ class _Handler(SimpleHTTPRequestHandler):
         except Exception:
             return self._json({})
 
-        cfg = api_mcp.load_config()
-        local_ts = cfg.get("toolsets", {})
+        from ..index_manager import IndexManager
+        im = IndexManager(); im.load()
+        local_names = set(im._local_tools.keys())
         result = {}
 
         # Flat‑list format (ToolStore registry: [{name, description, ...}])
@@ -386,7 +388,7 @@ class _Handler(SimpleHTTPRequestHandler):
                 if tdef.get("type") != "toolset":
                     continue
                 name = tdef.get("name", "")
-                if not name or name in local_ts:
+                if not name or name in local_names:
                     continue
                 bindings = tdef.get("bindings", {})
                 result[name] = {
@@ -403,7 +405,7 @@ class _Handler(SimpleHTTPRequestHandler):
                     continue
                 if tdef.get("type") != "toolset":
                     continue
-                if name in local_ts:
+                if name in local_names:
                     continue
                 bindings = tdef.get("bindings", {})
                 result[name] = {
@@ -430,21 +432,26 @@ class _Handler(SimpleHTTPRequestHandler):
             tdef = data.get("tools", {}).get(name)
         if not tdef or tdef.get("type") != "toolset":
             return self._json({"error": f"Toolset '{name}' not found in registry"}, 404)
-        cfg = api_mcp.load_config()
-        if name in cfg.get("toolsets", {}):
-            return self._json({"error": f"Toolset '{name}' already installed locally"}, 409)
-        exposure = body.get("exposure", "secondary")
-        code = tdef.get("code") or tdef.get("code_base64")
-        if code:
-            root = cm.config_dir / "toolsets"; (root / name).mkdir(parents=True, exist_ok=True)
-            if tdef.get("code_base64"): code = base64.b64decode(code).decode("utf-8")
-            (root / name / "toolset.py").write_text(code, encoding="utf-8")
-            cm.add_toolset_dir(str(root))
-        cfg.setdefault("toolsets", {})
-        cfg["toolsets"][name] = {"source": f"toolset:{name}",
-                                 "exposure": exposure, "description": tdef.get("description", "")}
-        api_mcp.save_config(cfg)
-        self._json({"success": True, "toolset": name, "exposure": exposure})
+        root = cm.config_dir / "toolsets"; (root / name).mkdir(parents=True, exist_ok=True)
+        code = tdef.get("code", "")
+        if not code and tdef.get("code_base64"):
+            code = base64.b64decode(tdef["code_base64"]).decode("utf-8")
+        (root / name / "toolset.py").write_text(code, encoding="utf-8")
+
+        from ..index_manager import IndexManager
+        im = IndexManager()
+        im.load()
+        im._local_tools[name] = {
+            "name": name,
+            "type": "toolset",
+            "source": "remote",
+            "toolset_dir": str(root / name),
+            "description": tdef.get("description", ""),
+            "doc": tdef.get("doc", "") or "",
+            "bindings": tdef.get("bindings", {}),
+        }
+        im._save_local()
+        self._json({"success": True, "toolset": name})
 
     # ── API: run code in Docker ───────────────────────────────────────
 
@@ -587,20 +594,26 @@ class _Handler(SimpleHTTPRequestHandler):
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
             except Exception: pass
-        for name, ts_info in cfg.get("toolsets", {}).items():
+        from ..index_manager import IndexManager
+        im = IndexManager(); im.load()
+        for name, entry in im._local_tools.items():
+            if entry.get("type") != "toolset":
+                continue
             result["toolsets"][name] = {
-                "source": ts_info.get("source", f"toolset:{name}"),
+                "source": entry.get("source", f"toolset:{name}"),
                 "enabled": True,
-                "exposure": ts_info.get("exposure", "secondary"),
+                "exposure": "secondary",
                 "parallel_safe": False, "subagent_safe": False,
-                "description": ts_info.get("description", "")}
+                "description": entry.get("description", "")}
         self._json(result)
 
     def _patch_tool(self, name: str, body: dict):
         cfg = api_mcp.load_config()
         tools = cfg.setdefault("tools", {})
-        toolsets = cfg.setdefault("toolsets", {})
-        target = tools if name in tools else (toolsets if name in toolsets else None)
+        from ..index_manager import IndexManager
+        im = IndexManager(); im.load()
+        in_local = name in im._local_tools
+        target = tools if name in tools else (im._local_tools if in_local else None)
         if target is None:
             # Check if name matches an MCP server's display_name or server_id
             servers = cfg.get("mcpServers", {})
