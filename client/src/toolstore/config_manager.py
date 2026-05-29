@@ -27,7 +27,7 @@ class ConfigManager:
 
     def _load_defaults(self) -> Dict[str, Any]:
         defaults = {
-            "registry_url": "http://localhost:8000/online_index",
+            "registry_url": "https://mrw33554432-agenttoolstore.hf.space/index.json",
             "mcpServers": {},
             "skill_dirs": [],
             "toolset_dirs": [],

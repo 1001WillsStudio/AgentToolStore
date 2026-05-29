@@ -332,25 +332,58 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json({"success": True})
 
     def _list_registry_toolsets(self):
-        import json
+        """Return online toolsets from the registry index.
+
+        Handles both the flat‑list format returned by the ToolStore
+        registry API and the legacy "tools"‑dict format."""
         cm = _config_manager()
         ip = cm.config_dir / "index.json"
-        if not ip.exists(): return self._json({})
-        try: data = json.loads(ip.read_text())
-        except Exception: return self._json({})
-        cfg = api_mcp.load_config(); local_ts = cfg.get("toolsets", {})
+        if not ip.exists():
+            return self._json({})
+        try:
+            data = json.loads(ip.read_text())
+        except Exception:
+            return self._json({})
+
+        cfg = api_mcp.load_config()
+        local_ts = cfg.get("toolsets", {})
         result = {}
-        for name, tdef in data.get("tools", {}).items():
-            if tdef.get("type") != "toolset": continue
-            if name in local_ts: continue
-            bindings = tdef.get("bindings", {})
-            result[name] = {
-                "description": tdef.get("description", ""),
-                "functions": list(bindings.keys()) if bindings else [],
-                "version": tdef.get("version", ""),
-                "source": tdef.get("source", "public"),
-                "category": tdef.get("category", ""),
-                "exposure": "hidden"}
+
+        # Flat‑list format (ToolStore registry: [{name, description, ...}])
+        if isinstance(data, list):
+            for tdef in data:
+                if not isinstance(tdef, dict):
+                    continue
+                if tdef.get("type") != "toolset":
+                    continue
+                name = tdef.get("name", "")
+                if not name or name in local_ts:
+                    continue
+                bindings = tdef.get("bindings", {})
+                result[name] = {
+                    "description": tdef.get("description", ""),
+                    "functions": list(bindings.keys()) if bindings else [],
+                    "version": tdef.get("version", ""),
+                    "source": tdef.get("source", "public"),
+                    "category": tdef.get("category", ""),
+                    "exposure": "hidden"}
+        # Legacy dict‑in‑dict format
+        elif isinstance(data, dict):
+            for name, tdef in data.get("tools", {}).items():
+                if not isinstance(tdef, dict):
+                    continue
+                if tdef.get("type") != "toolset":
+                    continue
+                if name in local_ts:
+                    continue
+                bindings = tdef.get("bindings", {})
+                result[name] = {
+                    "description": tdef.get("description", ""),
+                    "functions": list(bindings.keys()) if bindings else [],
+                    "version": tdef.get("version", ""),
+                    "source": tdef.get("source", "public"),
+                    "category": tdef.get("category", ""),
+                    "exposure": "hidden"}
         self._json(result)
 
     def _download_toolset(self, body: dict):
@@ -361,7 +394,11 @@ class _Handler(SimpleHTTPRequestHandler):
         if not ip.exists(): return self._json({"error": "Registry index not found"}, 404)
         try: data = json.loads(ip.read_text())
         except Exception: return self._json({"error": "Failed to read registry index"}, 500)
-        tdef = data.get("tools", {}).get(name)
+        # Handle both flat‑list and legacy dict format
+        if isinstance(data, list):
+            tdef = next((t for t in data if isinstance(t, dict) and t.get("name") == name), None)
+        else:
+            tdef = data.get("tools", {}).get(name)
         if not tdef or tdef.get("type") != "toolset":
             return self._json({"error": f"Toolset '{name}' not found in registry"}, 404)
         cfg = api_mcp.load_config()
@@ -497,13 +534,29 @@ class _Handler(SimpleHTTPRequestHandler):
         if ip.exists():
             try:
                 data = json.loads(ip.read_text())
-                for name, tdef in data.get("tools", {}).items():
-                    if name in result["mcp"] or name in result["skills"]: continue
-                    result["registry"][name] = {
-                        "source": tdef.get("source", "registry"),
-                        "enabled": True, "exposure": "hidden",
-                        "parallel_safe": False, "subagent_safe": False,
-                        "description": tdef.get("description", "")}
+                # Flat‑list format (ToolStore registry)
+                if isinstance(data, list):
+                    for tdef in data:
+                        if not isinstance(tdef, dict):
+                            continue
+                        name = tdef.get("name", "")
+                        if not name or name in result["mcp"] or name in result["skills"]:
+                            continue
+                        result["registry"][name] = {
+                            "source": tdef.get("source", "registry"),
+                            "enabled": True, "exposure": "hidden",
+                            "parallel_safe": False, "subagent_safe": False,
+                            "description": tdef.get("description", "")}
+                # Legacy dict format
+                else:
+                    for name, tdef in data.get("tools", {}).items():
+                        if name in result["mcp"] or name in result["skills"]:
+                            continue
+                        result["registry"][name] = {
+                            "source": tdef.get("source", "registry"),
+                            "enabled": True, "exposure": "hidden",
+                            "parallel_safe": False, "subagent_safe": False,
+                            "description": tdef.get("description", "")}
             except Exception: pass
         for name, ts_info in cfg.get("toolsets", {}).items():
             result["toolsets"][name] = {

@@ -232,6 +232,30 @@ body {
   border: 1px solid rgba(139,92,246,0.2);
 }
 
+.fn-count-tag {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+}
+
+.fn-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.fn-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  font-family: var(--font-mono);
+  background: rgba(139,92,246,0.08);
+  color: var(--accent-violet);
+  border: 1px solid rgba(139,92,246,0.15);
+}
+
 .tool-desc {
   font-size: 14px;
   line-height: 1.55;
@@ -347,6 +371,14 @@ def browse_tools(session: Session = Depends(get_session)):
         desc = (tool.description or "").replace("`", "\\`").replace("$", "\\$")[:200]
         tool_type = tool.type or "toolset"
 
+        # Collect function names from bindings
+        definition = tool.definition or {}
+        bindings = definition.get("bindings", {})
+        fn_names = list(bindings.keys()) if bindings else []
+        fn_tags = ""
+        for fn in fn_names:
+            fn_tags += f'<span class="tag fn-tag">{fn}</span> '
+
         tool_cards += f'''
         <div class="tool-card">
             <div class="tool-header">
@@ -357,7 +389,9 @@ def browse_tools(session: Session = Depends(get_session)):
                 <span class="tag type-tag">{tool_type}</span>
                 <span class="tag owner-tag">@{owner}</span>
                 <span class="tag version-tag">v{version}</span>
+                <span class="tag fn-count-tag">{len(fn_names)} functions</span>
             </div>
+            <div class="fn-list">{fn_tags}</div>
             <p class="tool-desc">{desc or "No description provided."}</p>
         </div>'''
 
