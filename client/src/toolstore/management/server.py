@@ -317,10 +317,13 @@ class _Handler(SimpleHTTPRequestHandler):
     def _remove_toolset(self, name: str):
         import shutil
         from ..config_manager import ConfigManager
+        from ..index_manager import IndexManager
+
         cfg = api_mcp.load_config()
         if name not in cfg.get("toolsets", {}):
             return self._json({"error": "Toolset not found"}, 404)
         del cfg["toolsets"][name]
+
         # Also delete the toolset directory from disk so it doesn't
         # reappear when the filesystem is rescanned on the next refresh.
         cm = ConfigManager(); cm.load()
@@ -330,6 +333,15 @@ class _Handler(SimpleHTTPRequestHandler):
                 shutil.rmtree(candidate, ignore_errors=True)
                 break
         api_mcp.save_config(cfg)
+
+        # Remove from the local registry immediately so the tool_store
+        # tool stops offering it before the next 'update' command.
+        im = IndexManager()
+        im.load()
+        if name in im._local_tools:
+            del im._local_tools[name]
+            im._save_local()
+
         self._json({"success": True})
 
     def _list_registry_toolsets(self):
