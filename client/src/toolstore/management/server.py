@@ -323,19 +323,22 @@ class _Handler(SimpleHTTPRequestHandler):
         if name not in cfg.get("toolsets", {}):
             return self._json({"error": "Toolset not found"}, 404)
         del cfg["toolsets"][name]
+        api_mcp.save_config(cfg)
 
-        # Also delete the toolset directory from disk so it doesn't
-        # reappear when the filesystem is rescanned on the next refresh.
         cm = ConfigManager(); cm.load()
+
+        # Delete from every configured toolset directory
         for base in cm.get_toolset_dirs():
             candidate = Path(base) / name
             if candidate.is_dir():
                 shutil.rmtree(candidate, ignore_errors=True)
-                break
-        api_mcp.save_config(cfg)
 
-        # Remove from the local registry immediately so the tool_store
-        # tool stops offering it before the next 'update' command.
+        # Delete the persistent copy that _list_toolsets creates
+        persistent_copy = cm.config_dir / "toolsets" / name
+        if persistent_copy.is_dir():
+            shutil.rmtree(persistent_copy, ignore_errors=True)
+
+        # Remove from the local registry immediately
         im = IndexManager()
         im.load()
         if name in im._local_tools:
