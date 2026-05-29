@@ -338,8 +338,18 @@ class _Handler(SimpleHTTPRequestHandler):
         registry API and the legacy "tools"‑dict format."""
         cm = _config_manager()
         ip = cm.config_dir / "index.json"
+
+        # Fetch from registry if no local cache yet
         if not ip.exists():
-            return self._json({})
+            try:
+                import urllib.request
+                registry = cm.get_registry_url()
+                with urllib.request.urlopen(registry, timeout=10) as resp:
+                    raw = resp.read().decode("utf-8")
+                    ip.parent.mkdir(parents=True, exist_ok=True)
+                    ip.write_text(raw, encoding="utf-8")
+            except Exception:
+                return self._json({})
         try:
             data = json.loads(ip.read_text())
         except Exception:
