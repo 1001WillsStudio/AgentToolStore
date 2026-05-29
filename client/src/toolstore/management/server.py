@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.parse
+from urllib.request import urlopen
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -346,9 +347,8 @@ class _Handler(SimpleHTTPRequestHandler):
         # Fetch from registry if no local cache
         if not ip.exists():
             try:
-                import urllib.request
-                registry = cm.get_registry_url()
-                with urllib.request.urlopen(registry, timeout=10) as resp:
+                registry_url = cm.get_registry_url()
+                with urlopen(registry_url, timeout=10) as resp:
                     raw = resp.read().decode("utf-8")
                     ip.parent.mkdir(parents=True, exist_ok=True)
                     ip.write_text(raw, encoding="utf-8")
