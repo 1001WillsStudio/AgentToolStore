@@ -400,13 +400,100 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
             index_manager.register_local_tool(tool)
 
     if not tool:
+        # Maybe it's an MCP server (toolset mode) — look up by display_name or id
+        tool = _resolve_mcp_toolset(tool_name, args)
+
+    if not tool:
         return f"Error: Tool '{tool_name}' not found."
 
     tool_type = tool.get("type", "unknown")
-    if tool_type != "toolset":
-        return f"Error: Unsupported tool type '{tool_type}' for execute"
 
-    return _execute_toolset_inline(tool, args)
+    # toolset → fast inline path
+    if tool_type == "toolset":
+        return _execute_toolset_inline(tool, args)
+
+    # mcp_toolset → resolve function → dispatch to MCP backend
+    if tool_type == "mcp_toolset":
+        return _execute_mcp_toolset(tool, args)
+
+    # mcp / skill / everything else → exec_tools dispatch
+    from toolstore.exec_tools import execute_tool
+    return execute_tool(tool, args)
+
+
+# ---------------------------------------------------------------------------
+# MCP toolset helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Resolve an MCP server (toolset mode) to a specific MCP tool.
+
+    ``tool_name`` is either a server ``display_name`` (e.g. "Echo Server")
+    or the raw server id (e.g. "echo-server").  The ``function`` argument
+    selects which individual MCP tool to execute.
+    """
+    config_manager.load()
+    servers = config_manager.config.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        return None
+
+    # Build server-id → (display_name, tools) lookup
+    server_map: Dict[str, tuple] = {}
+    tools = config_manager.config.get("tools", {})
+
+    for sid, srv in servers.items():
+        if not isinstance(srv, dict):
+            continue
+        display = srv.get("display_name") or sid
+        prefix = f"mcp:{sid}"
+        server_tools: Dict[str, dict] = {}
+        for tname, tinfo in tools.items():
+            if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
+                server_tools[tname] = tinfo
+        if server_tools:
+            server_map[sid] = (display, server_tools)
+            server_map[display] = (display, server_tools)  # also key by display_name
+
+    if tool_name not in server_map:
+        return None
+
+    _display, server_tools = server_map[tool_name]
+
+    # Which function?
+    function_name = args.get("function")
+    if not function_name and len(server_tools) == 1:
+        function_name = next(iter(server_tools))
+
+    if not function_name:
+        return None  # caller will report missing function
+
+    mcp_tool = server_tools.get(function_name)
+    if not mcp_tool:
+        return None
+
+    # Build a fake tool dict with type="mcp" so _execute_mcp can consume it
+    return {
+        "name": function_name,
+        "type": "mcp",
+        "mcp_server": mcp_tool.get("source", "").replace("mcp:", ""),
+    }
+
+
+def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
+    """Execute an MCP tool resolved from toolset mode.
+
+    This is the toolset-mode counterpart of the individual-mode path.
+    The tool dict was built by ``_resolve_mcp_toolset`` with the specific
+    MCP tool name and server already resolved.
+    """
+    from toolstore.exec_tools import _execute_mcp
+
+    function_name = args.get("function")
+    if not function_name:
+        return "Error: 'function' argument required. Specify which MCP tool to call."
+
+    # _execute_mcp expects the tool dict to have "name" and "mcp_server"
+    return _execute_mcp(tool, args, config_manager)
 
 
 def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:

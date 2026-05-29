@@ -27,6 +27,18 @@ def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
 
     if tool_type == "mcp":
         return _execute_mcp(tool, args, config_manager)
+    elif tool_type == "mcp_toolset":
+        # Toolset-mode: resolve function → find specific MCP tool → execute
+        function_name = args.get("function")
+        if not function_name:
+            return "Error: 'function' argument required for MCP toolset."
+        tools = config_manager.config.get("tools", {})
+        mcp_tool = tools.get(function_name)
+        if not mcp_tool or not isinstance(mcp_tool, dict):
+            return f"Error: MCP tool '{function_name}' not found."
+        mcp_tool = dict(mcp_tool)
+        mcp_tool["name"] = function_name
+        return _execute_mcp(mcp_tool, args, config_manager)
     elif tool_type == "skill":
         return _execute_skill(tool, args, config_manager)
     elif tool_type == "toolset":
