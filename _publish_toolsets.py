@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
-"""Publish all 8 toolsets to the ToolStore registry."""
+"""Publish ALL toolsets to the ToolStore registry."""
 import sys, json, requests
 sys.path.insert(0, 'client/src')
 from toolstore.toolset_manager import ToolsetDefinition
+from pathlib import Path
 
 BASE = "https://mrw33554432-agenttoolstore.hf.space"
-
-# Get token
-resp = requests.post(f"{BASE}/auth/register", json={"username": "pub_batch", "password": "batch789"})
+resp = requests.post(f"{BASE}/auth/register", json={"username": "pub_all", "password": "all999"})
 TOKEN = resp.json()["access_token"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-ALL = [
-    "text-transform", "file-verify", "xlsx-toolkit", "pdf-toolkit",
-    "docx-toolkit", "pptx-toolkit", "text-gen", "batch-ops",
-    "calc-toolkit",
-]
+# Auto-discover all toolset dirs
+ALL = sorted(d.name for d in Path("toolsets").iterdir() if d.is_dir())
 
 ok = fail = 0
 for name in ALL:
     td = ToolsetDefinition(f"toolsets/{name}")
-    ok_load = td.load()
-    if not ok_load or not td.functions:
+    if not td.load() or not td.functions:
         print(f"❌ {name}: validation failed")
         fail += 1
         continue
@@ -34,33 +29,23 @@ for name in ALL:
     except FileNotFoundError:
         doc = ""
 
-    reqs = []
-    try:
-        with open(f"toolsets/{name}/requirements.txt") as f:
-            reqs = [r.strip() for r in f.read().splitlines() if r.strip() and not r.startswith("#")]
-    except FileNotFoundError:
-        pass
-
     payload = {
         "name": name, "type": "toolset", "version": "1.0.0",
-        "description": doc.split("\n")[0].lstrip("#").strip() if doc else name,
+        "description": doc.split("\n")[0].lstrip("#").strip()[:200] if doc else name,
         "doc": doc, "code": code,
         "bindings": td.functions,
     }
-    if reqs:
-        payload["requirements"] = reqs
 
     resp = requests.post(f"{BASE}/publish", json=payload, headers=HEADERS, timeout=30)
     try:
         result = resp.json()
         if result.get("success"):
             ok += 1
-            print(f"✅ {name} — {len(td.functions)} functions: {list(td.functions.keys())}")
+            print(f"✅ {name}")
         else:
-            fail += 1
-            print(f"❌ {name}: {result}")
+            detail = str(result.get("detail", ""))[:60]
+            print(f"⚠️ {name}: {detail}")
     except Exception:
-        fail += 1
-        print(f"❌ {name}: empty response")
+        print(f"❌ {name}: empty ({resp.status_code})")
 
-print(f"\nDone: {ok} published, {fail} failed")
+print(f"\nDone: {ok} published")
