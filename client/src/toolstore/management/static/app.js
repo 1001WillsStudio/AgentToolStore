@@ -59,7 +59,7 @@ const api = {
   registerToolset(cfg)  { return this._fetch('POST', '/api/toolsets', cfg); },
   registerToolsetFolder(cfg) { return this._fetch('POST', '/api/toolsets/folder', cfg); },
   removeToolset(name)   { return this._fetch('DELETE', `/api/toolsets/${name}`); },
-  listRegistryToolsets(){ return this._fetch('GET', '/api/registry/toolsets'); },
+  listRegistryToolsets(refresh){ return this._fetch('GET', '/api/registry/toolsets' + (refresh ? '?refresh=true' : '')); },
   downloadToolset(cfg)  { return this._fetch('POST', '/api/registry/toolsets/download', cfg); },
 };
 
@@ -715,9 +715,9 @@ function selectBrowserPath(path) {
 // Online Toolsets tab
 // ═══════════════════════════════════════════════════════════════════════
 
-async function refreshOnlineToolsets() {
+async function refreshOnlineToolsets(refresh) {
   try {
-    state.onlineToolsets = await api.listRegistryToolsets();
+    state.onlineToolsets = await api.listRegistryToolsets(refresh);
   } catch (e) { /* keep stale */ }
 
   var list = document.getElementById('online-toolset-list');
@@ -774,8 +774,8 @@ async function downloadToolset(name) {
 
 // Wire up Online Toolsets refresh button
 document.getElementById('btn-refresh-online-toolsets').addEventListener('click', function () {
-  refreshOnlineToolsets();
-  toast('Refreshed');
+  refreshOnlineToolsets(true);
+  toast('Refreshed from registry');
 });
 
 // ═══════════════════════════════════════════════════════════════════════

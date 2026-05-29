@@ -332,14 +332,18 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json({"success": True})
 
     def _list_registry_toolsets(self):
-        """Return online toolsets from the registry index.
-
-        Handles both the flat‑list format returned by the ToolStore
-        registry API and the legacy "tools"‑dict format."""
+        """Return online toolsets from the registry index."""
         cm = _config_manager()
         ip = cm.config_dir / "index.json"
 
-        # Fetch from registry if no local cache yet
+        # Refresh: delete cache so we re‑fetch from registry
+        q = urllib.parse.urlparse(self.path).query
+        params = urllib.parse.parse_qs(q)
+        if params.get("refresh", [""])[0] == "true":
+            if ip.exists():
+                ip.unlink()
+
+        # Fetch from registry if no local cache
         if not ip.exists():
             try:
                 import urllib.request
