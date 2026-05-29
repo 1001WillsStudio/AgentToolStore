@@ -1,3 +1,13 @@
+---
+title: AgentToolStore Registry
+emoji: 🛠️
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://via.placeholder.com/800x200/1a1a2e/eee?text=🛠️+AgentToolStore">
