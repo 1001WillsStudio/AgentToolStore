@@ -12,6 +12,7 @@ pinned: false
   <img src="https://img.shields.io/badge/toolsets-14-blue" alt="14 toolsets">
   <img src="https://img.shields.io/badge/functions-46-brightgreen" alt="46 functions">
   <img src="https://img.shields.io/badge/license-MIT-purple" alt="MIT">
+  <img src="https://img.shields.io/badge/package-toolstore-orange" alt="toolstore">
   <img src="https://img.shields.io/badge/registry-live-brightgreen" alt="live">
 </p>
 
@@ -21,6 +22,9 @@ pinned: false
 JavaScript — ToolStore does the same for agent-callable toolsets. Agents
 discover tools through a single `tool_store` function instead of wiring up
 dozens of tools by hand.
+
+→ **[Client SDK docs](client/README.md)** — installing, integrating into agents, CLI, MCP bridge, skills
+→ **[Registry server docs](server/README.md)** — API endpoints, running locally, deploying on HF Spaces
 
 > **Live registry:** [mrw33554432-agenttoolstore.hf.space](https://mrw33554432-agenttoolstore.hf.space)
 
@@ -297,7 +301,7 @@ Spaces. All endpoints are public except auth and publish.
 | `/search?q=...` | GET | No | Search toolsets by name or description |
 | `/auth/token` | POST | No | Login — returns JWT token |
 | `/publish` | POST | JWT | Publish or update a toolset |
-| `/delete/{name}` | DELETE | JWT | Delete a toolset |
+| `/toolset/{name}` | DELETE | JWT | Delete a toolset |
 
 ### Running your own registry
 
