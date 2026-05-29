@@ -208,7 +208,7 @@ Agent: tool_store(action="close", tool_name="xlsx-toolkit")
   → Closed tool 'xlsx-toolkit'.
 ```
 
-### 4. Execution model
+### 5. Execution model
 
 | Property | Behaviour |
 |----------|-----------|
@@ -218,7 +218,7 @@ Agent: tool_store(action="close", tool_name="xlsx-toolkit")
 | **Isolation** | Each toolset runs in its own temp directory |
 | **Safety** | All code is visible in the registry; deps are explicit; agent decides what to install |
 
-### 5. Local execution (no registry)
+### 6. Local execution (no registry)
 
 Skip the registry entirely and call toolsets from a local directory:
 
@@ -264,7 +264,7 @@ toolstore export
 
 # Manage skills
 toolstore skill discover /path/to/skills
-toolstore skill list
+toolstore skill list-dirs
 ```
 
 Full command reference:
@@ -280,8 +280,8 @@ Full command reference:
 | `delete` | Remove a tool from the registry |
 | `export` | Export the meta-tool schema (OpenAI / vLLM formats) |
 | `serve` | Run ToolStore as an MCP server (stdio or SSE) |
-| `skill` | Manage Agent Skills (discover, list, create) |
-| `toolset` | Manage toolsets (publish, list, inspect) |
+| `skill` | Manage Agent Skills (scan, discover, publish, …) |
+| `toolset` | Manage toolsets (scan, list, publish, …) |
 | `mcp-server` | Register and manage MCP servers |
 | `docker` | Configure Docker execution permissions |
 
@@ -361,7 +361,9 @@ uvicorn app.main:app --port 8000
 ```
 
 Set `TOOLSTORE_REGISTRY_URL=http://localhost:8000/index.json` to point the
-CLI at your local registry. The default is the public HF Space.
+CLI at a local registry. The default is:
+
+    https://mrw33554432-agenttoolstore.hf.space/index.json
 
 ---
 

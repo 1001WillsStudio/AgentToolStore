@@ -251,8 +251,8 @@ toolstore skill list-dirs
 | `delete` | Remove a tool from the registry |
 | `export` | Export the meta-tool schema (OpenAI / vLLM) |
 | `serve` | Run ToolStore as an MCP server (stdio or SSE) |
-| `skill` | Discover, list, and register Agent Skills |
-| `toolset` | Publish, list, and inspect toolsets |
+| `skill` | Discover, list-dirs, and register Agent Skills |
+| `toolset` | Publish, list, show, and validate toolsets |
 | `mcp-server` | Register and manage MCP servers |
 | `docker` | Configure Docker execution permissions |
 
@@ -349,7 +349,7 @@ Key settings:
 Override the registry URL via environment variable:
 
 ```bash
-export TOOLSTORE_REGISTRY_URL=https://localhost:8000/index.json
+export TOOLSTORE_REGISTRY_URL=http://localhost:8000/index.json
 ```
 
 ---
