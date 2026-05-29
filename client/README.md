@@ -56,19 +56,44 @@ def handle_tool_call(tool_name: str, arguments: dict) -> str:
     # ... other tools
 ```
 
-The `tool_store` tool accepts these actions:
+The native `tool_store_tool` accepts three actions:
 
-| Action | Returns |
-|--------|---------|
-| `search` | List of toolsets matching a query string |
-| `info` | Full toolset definition — bindings, parameters, docstrings, source code |
-| `execute` | JSON result from running a toolset function in-process |
+| Action | What it does |
+|--------|-------------|
+| `search` | Find toolsets matching a query — used before the agent knows what's available |
+| `info` | Fetch a toolset's full schema (bindings, params, docstrings, source code) |
+| `execute` | Run a toolset function in-process and return the JSON result |
 
 Execution is **in-process** — code is fetched from the registry on demand,
 written to a temp directory, dependencies installed explicitly (never
 auto-installed), imported, and called. No Docker needed.
 
+### Secondary tools prompt
+
+Most tools in an agent are `exposure: secondary` — too many to list in every
+system message, but the agent must know they exist. ToolStore injects a compact
+name-only listing. Call `info` with `tool_names=[...]` and `format="secondary"`
+to get a prompt-friendly summary the agent can embed in its system message:
+
+```
+Tool store includes but is not limited to the following tools:
+- Echo Service
+- calculator
+- weather
+- skill:algorithmic-art
+...
+```
+
+The agent sees the names; when it needs a tool it calls `info` again
+(without `format="secondary"`) to get the full schema, then `execute`.
+
+Use `get_secondary_tool_names()` from `native_tool` to collect all secondary
+tools, then feed the list into the `tool_names` parameter of a single
+`info` call.
+
 ### Tool definition schema
+
+Register this single function in your agent's tool list:
 
 ```python
 TOOL_STORE_SCHEMA = {
@@ -84,21 +109,30 @@ TOOL_STORE_SCHEMA = {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["search", "info", "execute"],
+                    "enum": ["search", "execute", "info", "close"],
+                    "description": (
+                        "The action to perform: 'search' finds tools "
+                        "matching a query; 'execute' runs a tool; "
+                        "'info' adds a tool to your context so you can "
+                        "see its parameters; 'close' removes it."
+                    ),
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query (for action='search')",
+                    "description": "Search query string (for action='search')",
                 },
                 "tool_name": {
                     "type": "string",
-                    "description": "Toolset name (for action='info' or 'execute')",
+                    "description": (
+                        "Name of the tool to inspect, execute, or close "
+                        "(required for action='info', 'execute', or 'close')"
+                    ),
                 },
                 "arguments": {
                     "type": "object",
                     "description": (
-                        "Arguments for the tool function. Must include "
-                        "'function' key naming the function to call."
+                        "Arguments for the tool execution "
+                        "(required for action='execute')"
                     ),
                 },
             },

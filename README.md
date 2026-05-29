@@ -76,12 +76,30 @@ Requirements: Python ≥3.10, `httpx`, `pydantic`, `rich`, `typer`.
 
 ## Adding to Your Agent
 
-Add one tool definition and one handler. The agent gets every published
+Add one tool definition and one handler. The agent discovers every published
 toolset through a single `tool_store` call.
+
+### How it fits into an agent loop
+
+```
+System prompt                         Tool call loop
+─────────────────────────────────     ─────────────────────────────────
+"Tool store includes but not          1. Agent calls tool_store(search)
+ limited to: Echo Service,                → discovers xlsx-toolkit
+ calculator, weather, ..."
+                                      2. Agent calls tool_store(info)
+                                         → gets xlsx_read params + docs
+
+                                      3. Agent calls tool_store(execute)
+                                         → runs xlsx_read, gets result
+
+                                      4. Agent calls tool_store(close)
+                                         → frees context space
+```
 
 ### 1. Tool definition
 
-Add this to your agent's function-calling tools:
+Register this in your agent's function-calling tool list:
 
 ```python
 TOOL_STORE_SCHEMA = {
@@ -97,28 +115,30 @@ TOOL_STORE_SCHEMA = {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["search", "info", "execute"],
+                    "enum": ["search", "execute", "info", "close"],
                     "description": (
                         "The action to perform: 'search' finds tools "
-                        "matching a query; 'info' returns a tool's full "
-                        "schema and bindings; 'execute' runs a tool "
-                        "function and returns its result."
+                        "matching a query; 'execute' runs a tool; "
+                        "'info' adds a tool to your context so you can "
+                        "see its parameters; 'close' removes it."
                     ),
                 },
                 "query": {
                     "type": "string",
-                    "description": "Free-text search query (used with action='search')",
+                    "description": "Search query string (for action='search')",
                 },
                 "tool_name": {
                     "type": "string",
-                    "description": "Toolset name to inspect or execute (used with action='info' or 'execute')",
+                    "description": (
+                        "Name of the tool to inspect, execute, or close "
+                        "(required for action='info', 'execute', or 'close')"
+                    ),
                 },
                 "arguments": {
                     "type": "object",
                     "description": (
-                        "Arguments to pass to the tool function. Must include "
-                        "a 'function' key naming the function to call, plus "
-                        "any parameters the function expects."
+                        "Arguments for the tool execution "
+                        "(required for action='execute')"
                     ),
                 },
             },
@@ -130,18 +150,47 @@ TOOL_STORE_SCHEMA = {
 
 ### 2. Handler
 
-Wire the native `tool_store_tool` function into your agent's tool-call router:
+Wire the native function into your tool-call router. The native function
+handles `search`, `info`, and `execute` — add a small shim for `close`:
 
 ```python
 from toolstore.native_tool import tool_store_tool
 
-def handle_tool_call(tool_name: str, arguments: dict) -> str:
-    if tool_name == "tool_store":
-        return tool_store_tool(**arguments)
-    # ... your other tool handlers
+def handle_tool_store(action: str, **kwargs) -> str:
+    if action == "close":
+        return f"Closed tool '{kwargs.get('tool_name', '')}'."
+    return tool_store_tool(action=action, **kwargs)
 ```
 
-### 3. Agent conversation example
+### 3. Secondary tools prompt
+
+Most tools are `exposure: secondary` — too many to list in every system
+message. Inject a compact listing into the system prompt instead. Call
+`get_secondary_tool_names()` then `info` with `format="secondary"`:
+
+```python
+from toolstore.native_tool import get_secondary_tool_names, tool_store_tool
+
+names = get_secondary_tool_names()
+listing = tool_store_tool(action="info", tool_names=names, format="secondary")
+system_prompt += f"\n\n{listing}"
+```
+
+Produces:
+
+```
+Tool store includes but is not limited to the following tools:
+- Echo Service
+- calculator
+- weather
+- skill:algorithmic-art
+...
+```
+
+The agent sees names; when it needs a tool it calls `info` again (without
+`format="secondary"`) for the full schema, then `execute`.
+
+### 4. Agent conversation example
 
 ```
 Agent: tool_store(action="search", query="read Excel files")
@@ -155,6 +204,9 @@ Agent: tool_store(action="execute", tool_name="xlsx-toolkit",
                   arguments={"function": "xlsx_read",
                              "filepath": "/workspace/report.xlsx"})
   → {"sheets": ["Sheet1"], "data": {"Sheet1": [[...], ...]}}
+
+Agent: tool_store(action="close", tool_name="xlsx-toolkit")
+  → Closed tool 'xlsx-toolkit'.
 ```
 
 ### 4. Execution model
