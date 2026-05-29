@@ -210,9 +210,40 @@ def _execute_toolset_local(toolset_dir: str, function_name: str,
 
 def _execute_toolset_remote(tool: Dict[str, Any], function_name: str,
                             args: Dict[str, Any]) -> str:
-    """Run a remote (registry) toolset in a dedicated ephemeral Docker
-    container with its pre-configured environment."""
-    from toolstore.remote_runner import RemoteRunner
+    """Run a registry toolset in-process — no Docker needed.
 
-    runner = RemoteRunner(tool)
-    return runner.run(function_name, args, tool.get("timeout", 30))
+    Writes code to a temp directory, pip‑installs deps, then imports
+    and calls the function just like _execute_toolset_local.
+    """
+    import base64
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    code = tool.get("code", "")
+    code_b64 = tool.get("code_base64", "")
+    if code_b64 and not code:
+        code = base64.b64decode(code_b64).decode("utf-8")
+
+    if not code:
+        return "Error: toolset has no code to execute"
+
+    # Temp directory — lives for the duration of the function call
+    with tempfile.TemporaryDirectory(prefix="toolset_") as tmp_dir:
+        tmp = Path(tmp_dir)
+        (tmp / "toolset.py").write_text(code, encoding="utf-8")
+
+        # Install requirements if present
+        requirements = tool.get("requirements", [])
+        if isinstance(requirements, str):
+            requirements = [r.strip() for r in requirements.split("\n") if r.strip()]
+        if requirements:
+            return (
+                f"Error: This toolset requires packages that aren't installed: "
+                f"{', '.join(requirements)}.\n"
+                f"Install them first: pip install {' '.join(requirements)}"
+            )
+
+        # Now delegate to the local runner
+        return _execute_toolset_local(str(tmp), function_name, args)

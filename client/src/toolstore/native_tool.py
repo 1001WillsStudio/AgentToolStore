@@ -380,15 +380,12 @@ def get_secondary_tool_names() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
-    from toolstore.exec_tools import execute_tool
-
     if not tool_name:
         return "Error: 'tool_name' argument is required for execute action."
 
     index_manager.load()
     tool = index_manager.get_tool(tool_name)
 
-    # Fallback: skill:xxx tools — scan skill dirs and auto-register if found.
     if not tool and tool_name.startswith("skill:"):
         config_manager.load()
         raw_name = tool_name[len("skill:"):]
@@ -399,12 +396,76 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
         sd = sm.get_skill(raw_name)
         if sd:
             tool = sd.to_tool_definition()
-            tool["name"] = tool_name  # keep skill: prefix
-            # Auto-register so subsequent calls hit the index
+            tool["name"] = tool_name
             index_manager.register_tool(tool)
 
     if not tool:
         return f"Error: Tool '{tool_name}' not found."
 
-    return execute_tool(tool, args, config_manager, index_manager)
+    tool_type = tool.get("type", "unknown")
+    if tool_type != "toolset":
+        return f"Error: Unsupported tool type '{tool_type}' for execute"
+
+    return _execute_toolset_inline(tool, args)
+
+
+def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
+    """Self-contained toolset execution — no external imports needed."""
+    import base64
+    import importlib
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    args = dict(args)
+    bindings = tool.get("bindings", {})
+    function_name = args.pop("function", None)
+    if not function_name:
+        if len(bindings) == 1:
+            function_name = next(iter(bindings))
+        else:
+            names = list(bindings.keys()) if bindings else []
+            return f"Error: 'function' argument required. Available: {', '.join(names) or '(none)'}"
+
+    if function_name not in bindings:
+        names = list(bindings.keys())
+        return f"Error: Unknown function '{function_name}'. Available: {', '.join(names)}"
+
+    code = tool.get("code", "")
+    code_b64 = tool.get("code_base64", "")
+    if code_b64 and not code:
+        code = base64.b64decode(code_b64).decode("utf-8")
+    if not code:
+        return "Error: toolset has no code to execute"
+
+    with tempfile.TemporaryDirectory(prefix="toolset_") as tmp_dir:
+        tmp = Path(tmp_dir)
+        (tmp / "toolset.py").write_text(code, encoding="utf-8")
+
+        requirements = tool.get("requirements", [])
+        if isinstance(requirements, str):
+            requirements = [r.strip() for r in requirements.split("\n") if r.strip()]
+        if requirements:
+            return (
+                f"Error: Toolset '{function_name}' requires additional packages: "
+                f"{', '.join(requirements)}.\n"
+                f"Install them first: pip install {' '.join(requirements)}"
+            )
+
+        # Dynamically load and call the function
+        mod_name = f"_toolset_{function_name}"
+        spec = importlib.util.spec_from_file_location(mod_name, tmp / "toolset.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        fn = getattr(mod, function_name, None)
+        if fn is None:
+            return f"Error: Function '{function_name}' not found in toolset code"
+
+        try:
+            result = fn(**args)
+            return json.dumps(result, default=str, indent=2)
+        except Exception as exc:
+            return f"Error executing '{function_name}': {exc}"
 

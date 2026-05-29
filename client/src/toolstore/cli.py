@@ -23,6 +23,19 @@ config_manager = ConfigManager()
 index_manager.load()
 config_manager.load()
 
+
+def _base_url_from_registry(registry_url: str) -> str:
+    """Strip the index path from the registry URL to get the API base.
+
+    e.g. https://space.hf.space/index.json → https://space.hf.space
+         http://localhost:8000/online_index → http://localhost:8000
+    """
+    for suffix in ("/online_index", "/index.json"):
+        if registry_url.endswith(suffix):
+            return registry_url[:-len(suffix)]
+    return registry_url.rstrip("/")
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -283,7 +296,7 @@ def login(
     
     # For V1 MVP, assume registry is at the base of the index URL
     # e.g. http://localhost:8000/index.json -> http://localhost:8000
-    base_url = config_manager.get_registry_url().replace("/online_index", "")
+    base_url = _base_url_from_registry(config_manager.get_registry_url())
     token_url = f"{base_url}/auth/token"
     
     console.print(f"Logging in to {base_url}...")
@@ -337,7 +350,7 @@ def publish(tool_file: str = typer.Argument(..., help="Path to tool.json definit
         raise typer.Exit(1)
         
     # 3. Publish
-    base_url = config_manager.get_registry_url().replace("/online_index", "")
+    base_url = _base_url_from_registry(config_manager.get_registry_url())
     publish_url = f"{base_url}/publish"
     
     console.print(f"Publishing [cyan]{tool_def.get('name')}[/cyan]...")
@@ -374,7 +387,7 @@ def delete(
         raise typer.Exit(1)
         
     # 2. Delete
-    base_url = config_manager.get_registry_url().replace("/online_index", "")
+    base_url = _base_url_from_registry(config_manager.get_registry_url())
     delete_url = f"{base_url}/tools/{tool_name}"
     
     # Confirm action
@@ -740,7 +753,7 @@ def skill_publish(
     if registry:
         base_url = registry.rstrip("/")
     else:
-        base_url = config_manager.get_registry_url().replace("/online_index", "")
+        base_url = _base_url_from_registry(config_manager.get_registry_url())
 
     # ------------------------------------------------------------------
     # Batch mode
@@ -1081,7 +1094,7 @@ def toolset_publish(
         console.print("[yellow]Please login first using 'toolstore login'[/yellow]")
         raise typer.Exit(1)
 
-    base_url = config_manager.get_registry_url().replace("/online_index", "")
+    base_url = _base_url_from_registry(config_manager.get_registry_url())
     publish_url = f"{base_url}/publish"
 
     console.print(f"Publishing [cyan]{td.name}[/cyan] to {base_url}...")
@@ -1162,7 +1175,7 @@ def _use_toolset(tool: dict, parsed_params: dict, function: str | None) -> None:
         console.print(f"[blue]Running remote toolset:[/blue] {tool['name']}.{fn_name}")
         docker_image = tool.get("docker_image", "unknown")
         console.print(f"  Image: {docker_image}")
-        from toolstore.native_tool import _execute_toolset_remote
+        from toolstore.exec_tools import _execute_toolset_remote
         result = _execute_toolset_remote(tool, fn_name, parsed_params)
         console.print(f"\n[bold]Result:[/bold]\n{result}")
 

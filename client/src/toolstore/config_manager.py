@@ -76,6 +76,9 @@ class ConfigManager:
     # ----------------------------------------------------------------
 
     def get_registry_url(self) -> str:
+        # Env var overrides everything — used in CI / ephemeral contexts
+        if os.environ.get("TOOLSTORE_REGISTRY_URL"):
+            return os.environ["TOOLSTORE_REGISTRY_URL"]
         return self.config.get("registry_url", "http://localhost:8000/online_index")
 
     # ----------------------------------------------------------------
