@@ -112,23 +112,18 @@ def update():
                 t["source"] = f"mcp:{server_name}"
                 mcp_tools.append(t)
             
-            index_manager.update_from_remote(mcp_tools)
+            for t in mcp_tools:
+                index_manager.register_local_tool(t)
             mcp_tool_count += len(mcp_tools)
             client.disconnect()
             
         except Exception as e:
             console.print(f"[red]Failed to scan {server_name}:[/red] {e}")
 
-    # Scan local toolsets
+    # Scan local toolsets (writes to local_registry.json, never touches online_registry.json)
     toolset_dirs = config_manager.get_toolset_dirs()
     if toolset_dirs:
-        try:
-            tm = get_toolset_manager(toolset_dirs)
-            tcount = tm.scan()
-            if tcount:
-                index_manager.update_from_remote(tm.get_all_tool_definitions())
-        except Exception as e:
-            console.print(f"[red]Toolset scan failed:[/red] {e}")
+        index_manager.discover_local_toolsets(toolset_dirs)
 
     count = len(index_manager.index_data.get("tools", {}))
     console.print(f"OK: Index update complete ({count} total tools loaded)")
@@ -199,38 +194,8 @@ def use(
 
     # Dispatch execution based on type
     tool_type = tool.get("type")
-    if tool_type == "api":
-        import httpx
 
-        url = tool["endpoint"]
-        method = tool.get("method", "GET").upper()
-
-        # Handle path parameters if any (e.g. {area}/{location})
-        final_url = url
-        for k, v in parsed_params.items():
-            if f"{{{k}}}" in final_url:
-                final_url = final_url.replace(f"{{{k}}}", str(v))
-
-        console.print(f"Sending {method} request to: {final_url}")
-
-        try:
-            if method == "GET":
-                query_params = {k: v for k, v in parsed_params.items() if f"{{{k}}}" not in url}
-                response = httpx.get(final_url, params=query_params)
-            else:
-                response = httpx.post(final_url, json=parsed_params)
-
-            console.print(f"\n[bold]Response ({response.status_code}):[/bold]")
-            try:
-                console.print(response.json())
-            except Exception:
-                console.print(response.text)
-
-        except Exception as e:
-            console.print(f"[red]Execution failed:[/red] {e}")
-            raise typer.Exit(1)
-
-    elif tool_type == "mcp":
+    if tool_type == "mcp":
         server_name = tool.get("mcp_server")
         if not server_name:
             console.print("[red]Error:[/red] Tool definition missing 'mcp_server'")
@@ -488,7 +453,7 @@ def skill_scan(
         return
 
     # Register in index
-    index_manager.update_from_remote(sm.to_tool_definitions())
+    index_manager.update_local_skills(sm.to_tool_definitions())
 
     console.print(f"[green]Found {len(skills)} skills:[/green]")
     for sd in skills:
@@ -613,7 +578,7 @@ def skill_install(
         config_manager.add_skill_dir(str(d))
 
     # Update index
-    index_manager.update_from_remote(sm.to_tool_definitions())
+    index_manager.update_local_skills(sm.to_tool_definitions())
 
     console.print(f"[green]✓ Installed skill:[/green] {sd.name}")
     console.print(f"  Description: {sd.description[:100]}")
@@ -924,8 +889,8 @@ def toolset_scan(
         console.print("No toolsets found.")
         return
 
-    # Register in index
-    index_manager.update_from_remote(tm.get_all_tool_definitions())
+    # Register local toolsets (writes to local_registry.json, never touches online_registry.json)
+    index_manager.discover_local_toolsets(dirs)
 
     toolsets = tm.get_all()
     console.print(f"[green]Found {len(toolsets)} toolsets:[/green]")
@@ -1167,7 +1132,7 @@ def _use_toolset(tool: dict, parsed_params: dict, function: str | None) -> None:
     if toolset_dir:
         console.print(f"[blue]Running local toolset:[/blue] {tool['name']}.{fn_name}")
         console.print(f"  Source: {toolset_dir}")
-        from toolstore.native_tool import _execute_toolset_local
+        from toolstore.exec_tools import _execute_toolset_local
         result = _execute_toolset_local(toolset_dir, fn_name, parsed_params)
         console.print(f"\n[bold]Result:[/bold]\n{result}")
 
@@ -1209,16 +1174,16 @@ def serve(
         console.print(f"[blue]Scanning skills...[/blue]")
         skills = sm.scan()
         if skills:
-            index_manager.update_from_remote(sm.to_tool_definitions())
+            index_manager.update_local_skills(sm.to_tool_definitions())
             console.print(f"[green]Loaded {len(skills)} skills[/green]")
 
-    # Ensure toolsets are loaded
+    # Ensure local toolsets are loaded (in-memory only)
     tm = get_toolset_manager(config_manager.get_toolset_dirs())
     if config_manager.get_toolset_dirs():
         console.print(f"[blue]Scanning toolsets...[/blue]")
         tcount = tm.scan()
         if tcount:
-            index_manager.update_from_remote(tm.get_all_tool_definitions())
+            index_manager.discover_local_toolsets(config_manager.get_toolset_dirs())
             console.print(f"[green]Loaded {tcount} toolsets[/green]")
 
     server = ToolStoreMCPServer(index_manager, config_manager, sm)

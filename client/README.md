@@ -184,7 +184,6 @@ Rules:
 - Annotate every parameter with a **type hint**
 - Write a **Google-style docstring** with `Args:` section
 - Return a **JSON-serializable dict**
-- Put **dependencies** in a `requirements.txt` next to `toolset.py`
 
 ### Publishing
 
@@ -200,7 +199,7 @@ toolstore delete my-toolkit
 ```
 
 The publish command uses AST analysis to detect `@tool`-decorated functions
-and bundles them with your `doc.md` and `requirements.txt` automatically.
+and bundles them with your `doc.md` automatically.
 No manual JSON schemas needed.
 
 ---

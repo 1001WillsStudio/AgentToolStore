@@ -1,7 +1,7 @@
 """
 ToolStore as an MCP server.
 
-Exposes all indexed tools (api, mcp, skill) as MCP tools/resources/prompts
+Exposes all indexed tools (mcp, skill, toolset) as MCP tools/resources/prompts
 so any MCP-compatible host (Claude Desktop, VS Code, etc.) can connect and
 use the entire ToolStore catalog.
 
@@ -153,12 +153,10 @@ class ToolStoreMCPServer:
             }
 
         # Dispatch by type
-        tool_type = tool_def.get("type", "api")
+        tool_type = tool_def.get("type", "unknown")
         try:
             if tool_type == "skill":
                 return self._execute_skill(tool_def, arguments)
-            elif tool_type == "api":
-                return self._execute_api(tool_def, arguments)
             elif tool_type == "mcp":
                 return self._execute_mcp(tool_def, arguments)
             else:
@@ -173,28 +171,6 @@ class ToolStoreMCPServer:
                 "isError": True,
             }
 
-    def _execute_api(self, tool_def: Dict[str, Any],
-                     args: Dict[str, Any]) -> Dict[str, Any]:
-        import httpx
-        url = tool_def["endpoint"]
-        method = tool_def.get("method", "GET").upper()
-        # Path param substitution
-        final_url = url
-        for k, v in args.items():
-            if f"{{{k}}}" in final_url:
-                final_url = final_url.replace(f"{{{k}}}", str(v))
-        request_params = {k: v for k, v in args.items()
-                          if f"{{{k}}}" not in url}
-        if method == "GET":
-            resp = httpx.get(final_url, params=request_params, timeout=30.0)
-        else:
-            resp = httpx.request(method, final_url, json=request_params,
-                                 timeout=30.0)
-        try:
-            body = json.dumps(resp.json(), indent=2)
-        except Exception:
-            body = resp.text
-        return {"content": [{"type": "text", "text": body}]}
 
     def _execute_mcp(self, tool_def: Dict[str, Any],
                      args: Dict[str, Any]) -> Dict[str, Any]:

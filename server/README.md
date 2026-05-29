@@ -49,7 +49,7 @@ curl -X POST https://mrw33554432-agenttoolstore.hf.space/auth/token \
 curl -X POST https://mrw33554432-agenttoolstore.hf.space/publish \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"name":"my-toolkit","bindings":{...},"doc_md":"# My Toolkit","version":"1.0.0"}'
+  -d '{"name":"my-toolkit","bindings":{...},"doc":"# My Toolkit","version":"1.0.0"}'
 ```
 
 ### The browse page (`/`)
@@ -66,7 +66,7 @@ Returns an HTML page (not JSON) with:
 | Component | Technology |
 |-----------|-----------|
 | **Framework** | FastAPI (async, auto-generated OpenAPI docs at `/docs`) |
-| **Database** | SQLite via `sqlite3` (stdlib) with `SQLModel` for Pydantic schema validation |
+| **Database** | SQLite via SQLAlchemy (SQLModel ORM) with Pydantic schema validation |
 | **Auth** | JWT (OAuth2 password flow) — `python-jose` + `passlib` |
 | **Server** | Uvicorn (ASGI) |
 | **Deployment** | Docker on Hugging Face Spaces |

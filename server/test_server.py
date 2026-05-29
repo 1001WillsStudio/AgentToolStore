@@ -30,7 +30,7 @@ def test_flow():
     print("Testing Publish...")
     tool_def = {
         "name": "my-test-tool",
-        "type": "api",
+        "type": "toolset",
         "description": "A test tool",
         "endpoint": "http://example.com",
         "schema": {}

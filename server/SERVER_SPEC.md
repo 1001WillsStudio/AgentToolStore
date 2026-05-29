@@ -1,84 +1,91 @@
-# ToolStore Server Specification
+# ToolStore — Architecture
 
-> **Status:** Planning
-> **Focus:** Central Registry for Publishing & Distributing Tools
+## Two-registry design
 
----
+```
+online_registry.json   ←── save()            ──► remote toolsets only
+local_registry.json    ←── _save_local()    ──► local toolsets + skills + MCP
+                          │
+          _all_tools() ── merge at query time only ── search / execute
+```
 
-## 1. Core Architecture
+The two registries **never touch each other**. `save()` only writes `online_registry.json`. `_save_local()` only writes `local_registry.json`. Merging happens exclusively in `_all_tools()`, which is called by every query method (`search`, `get_tool`, `list_by_type`, `get_all`, `count`).
 
-The server acts as the "Source of Truth" for the public tool index.
+## online_registry.json
 
-### Components
-1.  **API (FastAPI):** Handles publishing and index generation.
-2.  **Database (SQLite/Postgres):** Stores persistent tool data and user accounts.
-3.  **Storage:** Stores raw JSON tool definitions (could be DB or S3).
+- **Single writer**: `update_from_remote()` at `index_manager.py`, called ONLY from the remote fetch path (`cli.py` → `cmd_update`).
+- **Never locally edited**. No `register_tool`, no `unregister_tool` — those were removed.
+- Contents: remote toolsets with `type: "toolset"`, `source: "public"`, and the `code` field included.
+- Served by the online server at `GET /index.json`.
 
----
+## local_registry.json
 
-## 2. API Endpoints
+- Persisted to disk — scanned once, cached, re-scanned only on explicit `update` / `scan`.
+- Written by three methods:
+  - `discover_local_toolsets(dirs)` — scans toolset directories, reads `toolset.py` + `doc.md`, stores `toolset_dir` path
+  - `update_local_skills(defs)` — merges skill definitions into local
+  - `register_local_tool(tool)` — single-tool registration (MCP servers)
+- Contents: `type: "toolset"` (with `toolset_dir`), `type: "skill"`, `type: "mcp"`, `source: "local"`
 
-### Public
-*   `GET /index.json`: Returns the full list of tools (the "Index"). Cached aggressively.
-*   `GET /tools/{name}`: Returns details for a specific tool.
-*   `GET /search?q=...`: Server-side search (optional, since client does local search).
+## Supported tool types
 
-### Publisher (Authenticated)
-*   `POST /auth/register`: Create a developer account.
-*   `POST /auth/login`: Get an API token.
-*   `POST /tools/publish`: Upload a new tool definition (`tool.json`).
-    *   Validates schema.
-    *   Checks namespace ownership.
-    *   Updates the database.
+| Type     | Registry | How executed |
+|----------|----------|--------------|
+| `toolset` (remote) | online | `code` field loaded from index |
+| `toolset` (local)  | local  | `toolset_dir`/`toolset.py` read from disk |
+| `skill`  | local  | Skill runner (local) |
+| `mcp`    | local  | MCP transport |
+| ~~`api`~~ | ~~removed~~ | Dead, fully stripped from code |
 
----
+## Execution dispatch
 
-## 3. Database Schema (SQLModel)
+```
+tool_store execute
+  │
+  ├─ toolset + code      → exec_tools._execute_toolset_remote()
+  ├─ toolset + toolset_dir → exec_tools._execute_toolset_local()  ← reads toolset.py from disk
+  ├─ mcp                → exec_tools._execute_mcp()
+  └─ skill              → exec_tools._execute_skill()
+```
 
-### User
-*   `id`: int
-*   `username`: str (unique)
-*   `email`: str
-*   `password_hash`: str
-*   `created_at`: datetime
+## Publish flow
 
-### Tool
-*   `id`: int
-*   `name`: str (unique)
-*   `owner_id`: int (FK -> User)
-*   `version`: str
-*   `type`: str ('api', 'mcp')
-*   `description`: str
-*   `definition`: JSON (The full tool schema)
-*   `created_at`: datetime
-*   `updated_at`: datetime
-*   `downloads`: int
+1. `toolset publish <name>` → AST-parses `toolset.py`, bundles `@tool` functions + `doc.md`
+2. Sends `{name, type, code, doc, bindings}` to `POST /publish` on the online server
+3. Server stores in SQLite, serves via `GET /index.json`
 
----
+## Update flow (`toolstore update`)
 
-## 4. Implementation Plan
+1. Fetch remote `index.json` → `update_from_remote()` → `online_registry.json`
+2. Scan local toolset dirs → `discover_local_toolsets()` → `local_registry.json`
+3. Scan skills → `update_local_skills()` → `local_registry.json`
+4. Scan MCP servers → `register_local_tool()` → `local_registry.json`
 
-### Phase 1: Project Skeleton
-- [ ] Initialize FastAPI project (`server/app`).
-- [ ] Setup SQLModel database connection.
-- [ ] Create User and Tool models.
+Steps 2–4 write to `local_registry.json` only. Step 1 writes to `online_registry.json` only. Neither path touches the other file.
 
-### Phase 2: Authentication
-- [ ] Implement User Registration.
-- [ ] Implement Login (JWT Tokens).
-- [ ] Protect publish endpoints.
+## Server API
 
-### Phase 3: Publishing Flow
-- [ ] Implement `POST /tools/publish`.
-- [ ] Add JSON Schema validation for uploaded tools.
-- [ ] Ensure unique names.
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/index.json` | Full remote registry |
+| `POST` | `/publish` | Publish a toolset |
+| `DELETE` | `/tools/{name}` | Delete a toolset |
+| `POST` | `/auth/register` | Register account |
+| `POST` | `/auth/token` | Login |
+| `GET`  | `/health` | Health check |
 
-### Phase 4: Index Generation
-- [ ] Implement `GET /index.json`.
-- [ ] Query DB -> Format as massive JSON list.
-- [ ] Add simple caching headers.
+## Dependencies
 
----
+Toolsets declare deps by guarding imports inside each function with `try/except ImportError`:
 
-**Goal:** A running server where I can POST a tool JSON and then GET index.json to see it.
+```python
+@tool
+def do_thing(*, path: str) -> dict:
+    try:
+        from some_package import Thing
+    except ImportError:
+        return {"error": "some-package not installed — run: pip install some-package"}
+    ...
+```
 
+No `requirements.txt` is read or bundled by the publish pipeline.

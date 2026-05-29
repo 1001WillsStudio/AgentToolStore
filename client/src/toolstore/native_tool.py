@@ -132,7 +132,7 @@ def _do_search(query: str) -> str:
                 # Auto-register in index so future calls find it
                 tool = sd.to_tool_definition()
                 tool["name"] = skill_key
-                index_manager.register_tool(tool)
+                index_manager.register_local_tool(tool)
                 results.append(tool)
 
     if not results:
@@ -214,7 +214,7 @@ def _do_info(tool_name: str) -> str:
         if sd:
             tool = sd.to_tool_definition()
             tool["name"] = tool_name
-            index_manager.register_tool(tool)
+            index_manager.register_local_tool(tool)
             return json.dumps(tool, indent=2)
 
     # ── Fallback to index lookup ────────────────────────────────────
@@ -397,7 +397,7 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
         if sd:
             tool = sd.to_tool_definition()
             tool["name"] = tool_name
-            index_manager.register_tool(tool)
+            index_manager.register_local_tool(tool)
 
     if not tool:
         return f"Error: Tool '{tool_name}' not found."
@@ -436,6 +436,14 @@ def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     code_b64 = tool.get("code_base64", "")
     if code_b64 and not code:
         code = base64.b64decode(code_b64).decode("utf-8")
+
+    # Local toolsets: read code from toolset_dir on disk
+    if not code and tool.get("toolset_dir"):
+        ts_dir = Path(tool["toolset_dir"])
+        ts_file = ts_dir / "toolset.py"
+        if ts_file.exists():
+            code = ts_file.read_text(encoding="utf-8")
+
     if not code:
         return "Error: toolset has no code to execute"
 

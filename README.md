@@ -321,7 +321,6 @@ Rules:
 - Annotate every parameter with a **type hint**
 - Write a **Google-style docstring** with an `Args:` section
 - Return a **JSON-serializable dict**
-- Put **dependencies** in `requirements.txt` next to `toolset.py`
 
 ### Two kinds of toolsets
 
@@ -491,7 +490,7 @@ toolstore use text-transform --function text_stats text="Hello world."
 1. Write a toolset (`toolsets/<name>/toolset.py` + `doc.md`)
 2. Decorate every callable function with `@tool`
 3. Use keyword-only arguments with type hints and Google-style docstrings
-4. List dependencies in `requirements.txt`
+4. Keep imports inside each function so they fail cleanly at call time
 5. Test with `toolstore use <name> --function <fn> <args>`
 6. Open a PR against `main`
 
