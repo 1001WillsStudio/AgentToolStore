@@ -418,7 +418,7 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
 
     # mcp / skill / everything else → exec_tools dispatch
     from toolstore.exec_tools import execute_tool
-    return execute_tool(tool, args)
+    return execute_tool(tool, args, config_manager, index_manager)
 
 
 # ---------------------------------------------------------------------------
