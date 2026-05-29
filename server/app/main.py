@@ -349,7 +349,7 @@ body {
 <footer class="footer">
   <span>AgentToolStore Registry</span>
   <span style="margin: 0 8px">·</span>
-  <span>v1.0.0-alpha</span>
+  <span>v2.0.0</span>
 </footer>
 
 </body>

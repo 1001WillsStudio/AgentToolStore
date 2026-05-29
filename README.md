@@ -26,6 +26,182 @@ npm for JavaScript — but for agent-callable toolsets.
 
 ---
 
+## Adding ToolStore to Your Agent
+
+ToolStore gives your agent a single `tool_store` function that unlocks every
+published toolset.  Add it once, and your agent can search, inspect, and
+execute any toolset from the registry — **no per-toolset wiring needed**.
+
+### 1. Install
+
+```bash
+pip install toolstore
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/Mrw33554432/AgentToolStore.git
+cd AgentToolStore
+pip install -e client/
+```
+
+### 2. Register the `tool_store` tool in your agent
+
+Import the native tool function and add it to your agent's tool list:
+
+```python
+from toolstore.native_tool import tool_store_tool
+
+# Add to your agent's tools (example: OpenAI function-calling agent)
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "tool_store",
+            "description": "A universal tool manager that lets you search, inspect, and execute thousands of tools and local utilities.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["search", "info", "execute"],
+                        "description": "The action to perform: 'search' for tools, 'info' to get a tool definition, 'execute' to run a tool"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (required for action='search')"
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Name of the tool to inspect or execute (required for action='info'/'execute')"
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Arguments to pass to the tool (required for action='execute')"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    }
+]
+
+# Wire up the handler in your agent loop
+def handle_tool_call(tool_name: str, arguments: dict) -> str:
+    if tool_name == "tool_store":
+        return tool_store_tool(**arguments)
+    # ... other tools ...
+```
+
+### 3. How agents use it — the three-step flow
+
+**Step 1 — Search** for relevant tools:
+
+```json
+// agent calls
+tool_store(action="search", query="parse xlsx file")
+
+// returns
+"Found 2 tools:
+- xlsx-toolkit (toolset): Read, create, and manipulate Excel files
+- pdf-toolkit (toolset): Extract text, metadata, and form fields from PDFs"
+```
+
+**Step 2 — Inspect** a tool to see its functions and parameters:
+
+```json
+// agent calls
+tool_store(action="info", tool_name="xlsx-toolkit")
+
+// returns the full tool definition with bindings, parameters, and docs
+```
+
+**Step 3 — Execute** a function from the toolset:
+
+```json
+// agent calls
+tool_store(action="execute", tool_name="xlsx-toolkit", arguments={
+    "function": "xlsx_read",
+    "filepath": "/workspace/data.xlsx"
+})
+
+// returns the JSON result from the function
+```
+
+### 4. What happens during execution
+
+ToolStore executes **in-process** — no Docker, no sandbox, no network round-trips
+beyond the initial fetch:
+
+1. **Code is fetched** from the registry (cached locally after first download)
+2. **Dependencies are checked** — if a toolset needs `openpyxl` or `pdfplumber`,
+   the agent receives a clear error listing what to install.  Nothing is ever
+   auto‑installed.
+3. **The function is imported and called** with the arguments the agent provides
+4. **Results are returned** as JSON
+
+The safety model is identical to skills: all code is visible in the registry,
+dependencies are explicit, and the agent controls what gets installed.
+
+### 5. Full agent loop example
+
+```python
+import json
+from toolstore.native_tool import tool_store_tool
+
+def agent_tool_router(tool_name: str, args: dict) -> str:
+    """Route tool calls to the right handler."""
+    if tool_name == "tool_store":
+        return tool_store_tool(**args)
+
+    # Your other tools here...
+    return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+# Simulated agent conversation:
+# 1. Agent searches for spreadsheet tools
+result = agent_tool_router("tool_store", {
+    "action": "search",
+    "query": "spreadsheet"
+})
+print(result)
+
+# 2. Agent inspects the xlsx-toolkit
+result = agent_tool_router("tool_store", {
+    "action": "info",
+    "tool_name": "xlsx-toolkit"
+})
+print(result)
+
+# 3. Agent reads an Excel file
+result = agent_tool_router("tool_store", {
+    "action": "execute",
+    "tool_name": "xlsx-toolkit",
+    "arguments": {
+        "function": "xlsx_read",
+        "filepath": "/workspace/report.xlsx"
+    }
+})
+print(result)
+```
+
+### 6. Local-only usage (no registry)
+
+You can also use toolsets directly from a local directory without any registry:
+
+```python
+from toolstore.exec_tools import _execute_toolset_local
+
+result = _execute_toolset_local(
+    toolset_path="./toolsets/xlsx-toolkit",
+    function_name="xlsx_read",
+    filepath="/workspace/data.xlsx"
+)
+print(result)
+```
+
+---
+
 ## What's a Toolset?
 
 A **toolset** is a directory containing:
@@ -82,11 +258,11 @@ agent guidance — the same content a skill would provide, now paired with code.
 
 ---
 
-## Quick Start
+## Quick Start (CLI)
 
-### Use toolsets (as an agent)
+### Use toolsets directly from the command line
 
-```
+```bash
 toolstore update                          # pull registry index
 toolstore use text-transform \
     --function text_stats \
