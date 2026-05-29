@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
+from fastapi.responses import HTMLResponse
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
@@ -31,9 +32,347 @@ class Token(BaseModel):
 
 # -- Endpoints --
 
-@app.get("/")
+@app.get("/api")
 def read_root():
     return {"message": "Welcome to ToolStore Registry API"}
+
+
+# ── Browse HTML Template ──────────────────────────────────────────────
+
+TOOLS_HTML = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ToolStore Registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a25;
+  --accent-violet: #8b5cf6;
+  --accent-cyan: #06b6d4;
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.1);
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 32px rgba(139,92,246,0.15);
+  --font-sans: "Outfit",-apple-system,BlinkMacSystemFont,sans-serif;
+  --font-mono: "JetBrains Mono","Fira Code",monospace;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── Header ── */
+.header {
+  width: 100%%;
+  text-align: center;
+  padding: 64px 24px 48px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%%;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34,197,94,0.5);
+}
+
+.header h1 {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--accent-violet) 0%%, var(--accent-cyan) 100%%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 8px;
+}
+
+.header p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.count-pill {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 16px;
+  background: rgba(139,92,246,0.1);
+  border: 1px solid rgba(139,92,246,0.25);
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--accent-violet);
+  font-weight: 500;
+}
+
+/* ── Grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  width: 100%%;
+  max-width: 1100px;
+  padding: 40px 24px 80px;
+}
+
+/* ── Tool Card ── */
+.tool-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.tool-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-violet), transparent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tool-card:hover {
+  border-color: rgba(139,92,246,0.3);
+  box-shadow: var(--shadow-glow);
+}
+
+.tool-card:hover::before {
+  opacity: 1;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tool-icon {
+  font-size: 22px;
+}
+
+.tool-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.tool-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+
+.type-tag {
+  background: rgba(6,182,212,0.12);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(6,182,212,0.2);
+}
+
+.owner-tag {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.version-tag {
+  background: rgba(139,92,246,0.1);
+  color: var(--accent-violet);
+  border: 1px solid rgba(139,92,246,0.2);
+}
+
+.tool-desc {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Empty State ── */
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 80px 24px;
+}
+
+.empty-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.empty-state h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.empty-state p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.empty-state code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-tertiary);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  color: var(--accent-cyan);
+}
+
+/* ── Footer ── */
+.footer {
+  width: 100%%;
+  text-align: center;
+  padding: 24px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: auto;
+}
+
+.footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footer a:hover {
+  color: var(--accent-violet);
+}
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .header h1 { font-size: 32px; }
+  .grid { grid-template-columns: 1fr; padding: 24px 16px 60px; }
+}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="badge">
+    <span class="badge-dot"></span>
+    Registry Online
+  </div>
+  <h1>AgentToolStore</h1>
+  <p>Discover toolsets built by the community.</p>
+  <span class="count-pill">%d toolset(s) available</span>
+</header>
+
+<div class="grid">
+  %s
+</div>
+
+<footer class="footer">
+  <span>AgentToolStore Registry</span>
+  <span style="margin: 0 8px">·</span>
+  <span>v1.0.0-alpha</span>
+</footer>
+
+</body>
+</html>
+'''
+
+
+@app.get("/", response_class=HTMLResponse)
+def browse_tools(session: Session = Depends(get_session)):
+    """
+    Display-only browse page showing all published toolsets.
+    """
+    tools = session.exec(select(Tool)).all()
+
+    tool_cards = ""
+    for tool in tools:
+        owner = tool.owner.username if tool.owner else "unknown"
+        version = tool.version or "—"
+        desc = (tool.description or "").replace("`", "\\`").replace("$", "\\$")[:200]
+        tool_type = tool.type or "toolset"
+
+        tool_cards += f'''
+        <div class="tool-card">
+            <div class="tool-header">
+                <span class="tool-icon">📦</span>
+                <span class="tool-name">{tool.name}</span>
+            </div>
+            <div class="tool-meta">
+                <span class="tag type-tag">{tool_type}</span>
+                <span class="tag owner-tag">@{owner}</span>
+                <span class="tag version-tag">v{version}</span>
+            </div>
+            <p class="tool-desc">{desc or "No description provided."}</p>
+        </div>'''
+
+    if not tool_cards:
+        tool_cards = '''
+                <div class="empty-state">
+                    <div class="empty-icon">🛠️</div>
+                    <h2>No toolsets published yet</h2>
+                    <p>Use the CLI to publish your first toolset:</p>
+                    <code>toolstore publish ./my-toolset</code>
+                </div>'''
+
+    count = len(tools)
+    html = TOOLS_HTML % (count, tool_cards)
+    return html
 
 @app.post("/auth/register", response_model=Token)
 def register(user: UserCreate, session: Session = Depends(get_session)):
