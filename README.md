@@ -10,29 +10,49 @@ pinned: false
 
 <p align="center">
   <img src="https://img.shields.io/badge/toolsets-14-blue" alt="14 toolsets">
-  <img src="https://img.shields.io/badge/functions-40%2B-green" alt="40+ functions">
+  <img src="https://img.shields.io/badge/functions-46-brightgreen" alt="46 functions">
   <img src="https://img.shields.io/badge/license-MIT-purple" alt="MIT">
   <img src="https://img.shields.io/badge/registry-live-brightgreen" alt="live">
 </p>
 
-# 🛠️ AgentToolStore
+# AgentToolStore
 
-**The shared index that turns a scattered collection of tools into a unified,
-searchable, versioned ecosystem.** Same role PyPI plays for Python packages,
-npm for JavaScript — but for agent-callable toolsets.
+**A package index for agent tools.** PyPI for Python packages, npm for
+JavaScript — ToolStore does the same for agent-callable toolsets. Agents
+discover tools through a single `tool_store` function instead of wiring up
+dozens of tools by hand.
 
 > **Live registry:** [mrw33554432-agenttoolstore.hf.space](https://mrw33554432-agenttoolstore.hf.space)
-> — browse, search, and publish toolsets.
 
 ---
 
-## Adding ToolStore to Your Agent
+## How it works
 
-ToolStore gives your agent a single `tool_store` function that unlocks every
-published toolset.  Add it once, and your agent can search, inspect, and
-execute any toolset from the registry — **no per-toolset wiring needed**.
+```
+ ┌──────────────────────┐
+ │ Your agent            │
+ │                       │
+ │  tool_store(          │     search / info       ┌─────────────────────┐
+ │    action="search",   │ ──────────────────────→ │ Registry (HF Space) │
+ │    query="parse xlsx" │ ←────────────────────── │ FastAPI + SQLite    │
+ │  )                    │     list of toolsets     └─────────────────────┘
+ │                       │
+ │  tool_store(          │     execute             ┌─────────────────────┐
+ │    action="execute",  │ ──────────────────────→ │ In-process runner    │
+ │    tool_name="xlsx-", │                        │ Fetch code → tmpdir  │
+ │    arguments={...}    │ ←────────────────────── │ pip deps → import   │
+ │  )                    │     JSON result         │ → call → return      │
+ └──────────────────────┘                         └─────────────────────┘
+```
 
-### 1. Install
+1. **Search** the registry for tools by name, description, or tag
+2. **Inspect** a toolset to see its functions, parameters, and docs
+3. **Execute** any function — code is fetched on demand, deps installed
+explicitly, runs in-process with no Docker
+
+---
+
+## Installation
 
 ```bash
 pip install toolstore
@@ -42,152 +62,110 @@ Or from source:
 
 ```bash
 git clone https://github.com/Mrw33554432/AgentToolStore.git
-cd AgentToolStore
-pip install -e client/
+cd AgentToolStore/client
+pip install -e .
 ```
 
-### 2. Register the `tool_store` tool in your agent
+Requirements: Python ≥3.10, `httpx`, `pydantic`, `rich`, `typer`.
 
-Import the native tool function and add it to your agent's tool list:
+---
+
+## Adding to Your Agent
+
+Add one tool definition and one handler. The agent gets every published
+toolset through a single `tool_store` call.
+
+### 1. Tool definition
+
+Add this to your agent's function-calling tools:
+
+```python
+TOOL_STORE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "tool_store",
+        "description": (
+            "A universal tool manager that lets you search, inspect, "
+            "and execute thousands of tools and local utilities."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "info", "execute"],
+                    "description": (
+                        "The action to perform: 'search' finds tools "
+                        "matching a query; 'info' returns a tool's full "
+                        "schema and bindings; 'execute' runs a tool "
+                        "function and returns its result."
+                    ),
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Free-text search query (used with action='search')",
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Toolset name to inspect or execute (used with action='info' or 'execute')",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": (
+                        "Arguments to pass to the tool function. Must include "
+                        "a 'function' key naming the function to call, plus "
+                        "any parameters the function expects."
+                    ),
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+```
+
+### 2. Handler
+
+Wire the native `tool_store_tool` function into your agent's tool-call router:
 
 ```python
 from toolstore.native_tool import tool_store_tool
 
-# Add to your agent's tools (example: OpenAI function-calling agent)
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "tool_store",
-            "description": "A universal tool manager that lets you search, inspect, and execute thousands of tools and local utilities.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["search", "info", "execute"],
-                        "description": "The action to perform: 'search' for tools, 'info' to get a tool definition, 'execute' to run a tool"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Search query (required for action='search')"
-                    },
-                    "tool_name": {
-                        "type": "string",
-                        "description": "Name of the tool to inspect or execute (required for action='info'/'execute')"
-                    },
-                    "arguments": {
-                        "type": "object",
-                        "description": "Arguments to pass to the tool (required for action='execute')"
-                    }
-                },
-                "required": ["action"]
-            }
-        }
-    }
-]
-
-# Wire up the handler in your agent loop
 def handle_tool_call(tool_name: str, arguments: dict) -> str:
     if tool_name == "tool_store":
         return tool_store_tool(**arguments)
-    # ... other tools ...
+    # ... your other tool handlers
 ```
 
-### 3. How agents use it — the three-step flow
+### 3. Agent conversation example
 
-**Step 1 — Search** for relevant tools:
+```
+Agent: tool_store(action="search", query="read Excel files")
+  → Found: xlsx-toolkit — Read, create, and manipulate Excel files
 
-```json
-// agent calls
-tool_store(action="search", query="parse xlsx file")
+Agent: tool_store(action="info", tool_name="xlsx-toolkit")
+  → Returns bindings for xlsx_read, xlsx_sheets, xlsx_to_csv, xlsx_create
+    with parameter types and docstrings for each
 
-// returns
-"Found 2 tools:
-- xlsx-toolkit (toolset): Read, create, and manipulate Excel files
-- pdf-toolkit (toolset): Extract text, metadata, and form fields from PDFs"
+Agent: tool_store(action="execute", tool_name="xlsx-toolkit",
+                  arguments={"function": "xlsx_read",
+                             "filepath": "/workspace/report.xlsx"})
+  → {"sheets": ["Sheet1"], "data": {"Sheet1": [[...], ...]}}
 ```
 
-**Step 2 — Inspect** a tool to see its functions and parameters:
+### 4. Execution model
 
-```json
-// agent calls
-tool_store(action="info", tool_name="xlsx-toolkit")
+| Property | Behaviour |
+|----------|-----------|
+| **Runtime** | In-process — no Docker, no sandbox |
+| **Code origin** | Fetched from registry, cached after first download |
+| **Dependencies** | Never auto-installed; agent gets a clear error listing what's needed |
+| **Isolation** | Each toolset runs in its own temp directory |
+| **Safety** | All code is visible in the registry; deps are explicit; agent decides what to install |
 
-// returns the full tool definition with bindings, parameters, and docs
-```
+### 5. Local execution (no registry)
 
-**Step 3 — Execute** a function from the toolset:
-
-```json
-// agent calls
-tool_store(action="execute", tool_name="xlsx-toolkit", arguments={
-    "function": "xlsx_read",
-    "filepath": "/workspace/data.xlsx"
-})
-
-// returns the JSON result from the function
-```
-
-### 4. What happens during execution
-
-ToolStore executes **in-process** — no Docker, no sandbox, no network round-trips
-beyond the initial fetch:
-
-1. **Code is fetched** from the registry (cached locally after first download)
-2. **Dependencies are checked** — if a toolset needs `openpyxl` or `pdfplumber`,
-   the agent receives a clear error listing what to install.  Nothing is ever
-   auto‑installed.
-3. **The function is imported and called** with the arguments the agent provides
-4. **Results are returned** as JSON
-
-The safety model is identical to skills: all code is visible in the registry,
-dependencies are explicit, and the agent controls what gets installed.
-
-### 5. Full agent loop example
-
-```python
-import json
-from toolstore.native_tool import tool_store_tool
-
-def agent_tool_router(tool_name: str, args: dict) -> str:
-    """Route tool calls to the right handler."""
-    if tool_name == "tool_store":
-        return tool_store_tool(**args)
-
-    # Your other tools here...
-    return json.dumps({"error": f"Unknown tool: {tool_name}"})
-
-# Simulated agent conversation:
-# 1. Agent searches for spreadsheet tools
-result = agent_tool_router("tool_store", {
-    "action": "search",
-    "query": "spreadsheet"
-})
-print(result)
-
-# 2. Agent inspects the xlsx-toolkit
-result = agent_tool_router("tool_store", {
-    "action": "info",
-    "tool_name": "xlsx-toolkit"
-})
-print(result)
-
-# 3. Agent reads an Excel file
-result = agent_tool_router("tool_store", {
-    "action": "execute",
-    "tool_name": "xlsx-toolkit",
-    "arguments": {
-        "function": "xlsx_read",
-        "filepath": "/workspace/report.xlsx"
-    }
-})
-print(result)
-```
-
-### 6. Local-only usage (no registry)
-
-You can also use toolsets directly from a local directory without any registry:
+Skip the registry entirely and call toolsets from a local directory:
 
 ```python
 from toolstore.exec_tools import _execute_toolset_local
@@ -195,91 +173,84 @@ from toolstore.exec_tools import _execute_toolset_local
 result = _execute_toolset_local(
     toolset_path="./toolsets/xlsx-toolkit",
     function_name="xlsx_read",
-    filepath="/workspace/data.xlsx"
+    filepath="/workspace/data.xlsx",
 )
-print(result)
 ```
 
 ---
 
-## What's a Toolset?
+## CLI Usage
 
-A **toolset** is a directory containing:
+```bash
+# Pull the latest index from the registry
+toolstore update
+
+# Search for tools
+toolstore search "spreadsheet"
+
+# Inspect a toolset
+toolstore info xlsx-toolkit
+
+# Execute a function
+toolstore use text-transform --function text_stats text="Hello world."
+
+# Publish your own toolset
+toolstore login --username <user> --password <pass>
+toolstore toolset publish ./toolsets/my-toolkit
+
+# Delete a toolset
+toolstore delete my-toolkit
+
+# Run the management web UI
+toolstore serve
+
+# Run as an MCP server (stdio or SSE)
+toolstore mcp-server serve
+
+# Export the tool_store schema for use with OpenAI / vLLM
+toolstore export
+
+# Manage skills
+toolstore skill discover /path/to/skills
+toolstore skill list
+```
+
+Full command reference:
+
+| Command | Description |
+|---------|-------------|
+| `update` | Pull the latest registry index and scan local MCP servers |
+| `search` | Search for tools by name, description, or tags |
+| `use` | Execute a tool function immediately |
+| `info` | Show detailed schema and documentation for a tool |
+| `login` | Authenticate with the registry to publish |
+| `publish` | Publish a new tool or update an existing one |
+| `delete` | Remove a tool from the registry |
+| `export` | Export the meta-tool schema (OpenAI / vLLM formats) |
+| `serve` | Run the management web UI |
+| `skill` | Manage Agent Skills (discover, list, create) |
+| `toolset` | Manage toolsets (publish, list, inspect) |
+| `mcp-server` | Register and manage MCP servers |
+| `docker` | Configure Docker execution permissions |
+
+---
+
+## Writing a Toolset
+
+A toolset is a directory with two files:
 
 ```
 my-toolkit/
-├── toolset.py   ← @tool functions (code bindings)
-└── doc.md       ← guidance, process, best practices (the skill)
+├── toolset.py    # @tool functions (code bindings)
+└── doc.md        # human + agent guidance
 ```
 
-Two kinds exist:
+### toolset.py
 
-| Type | `toolset.py` | `doc.md` | Example |
-|------|-------------|----------|---------|
-| **Code toolset** | Real `@tool` functions | Full docs | `xlsx-toolkit`, `file-verify` |
-| **Doc-only toolset** | Minimal module, no `@tool` | Full skill doc | `stuck-toolkit` |
-
-Every function decorated with `@tool` becomes a callable binding that agents
-discover and execute. The `doc.md` serves as both human documentation and
-agent guidance — the same content a skill would provide, now paired with code.
-
----
-
-## Toolsets Catalog
-
-### 📄 Documents
-
-| Toolset | Functions | Deps |
-|---------|-----------|------|
-| **xlsx-toolkit** | `xlsx_read`, `xlsx_sheets`, `xlsx_to_csv`, `xlsx_create` | `openpyxl` |
-| **pdf-toolkit** | `pdf_extract`, `pdf_meta`, `pdf_merge`, `pdf_form_fields` | `pdfplumber`, `PyPDF2` |
-| **docx-toolkit** | `docx_read`, `docx_info`, `docx_extract_tables`, `docx_create` | `python-docx` |
-| **pptx-toolkit** | `pptx_read`, `pptx_info`, `pptx_create` | `python-pptx` |
-
-### 🔧 Utility
-
-| Toolset | Functions | Deps |
-|---------|-----------|------|
-| **text-transform** | `text_diff`, `regex_extract`, `markdown_table`, `text_stats` | stdlib |
-| **file-verify** | `check_json`, `check_yaml`, `check_csv`, `file_hash`, `detect_encoding` | `chardet` (opt) |
-| **calc-toolkit** | `eval_expression`, `convert_unit`, `basic_stats` | stdlib |
-| **text-gen** | `lorem_words`, `lorem_paragraphs`, `generate_sentences`, `generate_data` | stdlib |
-| **batch-ops** | `batch_rename`, `batch_find_replace`, `batch_stats`, `batch_copy` | stdlib |
-
-### 🧠 Guidance & Diagnostics
-
-| Toolset | Functions | Deps |
-|---------|-----------|------|
-| **debug-toolkit** | `analyze_error`, `extract_log_patterns` | stdlib |
-| **webapp-testing** | `check_url`, `extract_urls` | stdlib |
-| **doc-coauthoring** | `document_outline`, `markdown_template` | stdlib |
-| **internal-comms** | `comms_template`, `format_bullets` | stdlib |
-| **stuck-toolkit** | *doc-only — no code bindings* | — |
-
----
-
-## Quick Start (CLI)
-
-### Use toolsets directly from the command line
-
-```bash
-toolstore update                          # pull registry index
-toolstore use text-transform \
-    --function text_stats \
-    text="The quick brown fox..."
-```
-
-### Publish a toolset
-
-```bash
-toolstore login --username <user> --password <pass>
-toolstore toolset publish ./toolsets/my-toolkit
-```
-
-### Write a toolset
+Every function decorated with `@tool` becomes a callable binding. The decorator
+auto-generates an OpenAI function-calling schema from type hints and docstrings:
 
 ```python
-# toolsets/my-toolkit/toolset.py
 from toolstore.toolset import tool
 
 @tool
@@ -288,89 +259,199 @@ def my_function(*, input: str, count: int = 1) -> dict:
 
     Args:
         input: The input text.
-        count: How many times.
+        count: How many times to repeat.
     """
     return {"result": input * count}
 ```
 
-The `@tool` decorator auto-generates the OpenAI function-calling schema from
-type hints and docstrings — no manual JSON needed.
+Rules:
+- Use **keyword-only arguments** (`*,`)
+- Annotate every parameter with a **type hint**
+- Write a **Google-style docstring** with an `Args:` section
+- Return a **JSON-serializable dict**
+- Put **dependencies** in `requirements.txt` next to `toolset.py`
+
+### Two kinds of toolsets
+
+| Type | `toolset.py` | `doc.md` | Example |
+|------|-------------|----------|---------|
+| **Code** | Real `@tool` functions | Full docs | `xlsx-toolkit`, `file-verify` |
+| **Doc-only** | Minimal empty module | Full guidance | `stuck-toolkit` |
+
+Doc-only toolsets are valid — they carry skill content without code bindings.
+No placeholder functions allowed. Code or nothing.
 
 ---
 
-## Architecture
+## Registry API
+
+The registry is a FastAPI server backed by SQLite, hosted on Hugging Face
+Spaces. All endpoints are public except auth and publish.
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/` | GET | No | Browse page (HTML) showing all published toolsets |
+| `/index.json` | GET | No | Full index of all toolsets with metadata and bindings |
+| `/online_index` | GET | No | Lightweight index with only `name`, `version`, `description` |
+| `/toolset/{name}` | GET | No | Single toolset with full bindings |
+| `/search?q=...` | GET | No | Search toolsets by name or description |
+| `/auth/token` | POST | No | Login — returns JWT token |
+| `/publish` | POST | JWT | Publish or update a toolset |
+| `/delete/{name}` | DELETE | JWT | Delete a toolset |
+
+### Running your own registry
+
+```bash
+cd server
+pip install -r requirements.txt
+python init_db.py          # create SQLite database
+uvicorn app.main:app --port 8000
+```
+
+Set `TOOLSTORE_REGISTRY_URL=http://localhost:8000/index.json` to point the
+CLI at your local registry. The default is the public HF Space.
+
+---
+
+## Toolsets Catalog
+
+All 14 toolsets published on the live registry.
+
+### Document processing
+
+| Toolset | Functions | Dependencies |
+|---------|-----------|-------------|
+| **xlsx-toolkit** | `xlsx_read` · `xlsx_sheets` · `xlsx_to_csv` · `xlsx_create` | `openpyxl` |
+| **pdf-toolkit** | `pdf_extract` · `pdf_meta` · `pdf_merge` · `pdf_form_fields` | `pdfplumber`, `PyPDF2` |
+| **docx-toolkit** | `docx_read` · `docx_info` · `docx_extract_tables` · `docx_create` | `python-docx` |
+| **pptx-toolkit** | `pptx_read` · `pptx_info` · `pptx_create` | `python-pptx` |
+
+### Utility
+
+| Toolset | Functions | Dependencies |
+|---------|-----------|-------------|
+| **text-transform** | `text_diff` · `regex_extract` · `markdown_table` · `text_stats` | stdlib |
+| **file-verify** | `check_json` · `check_yaml` · `check_csv` · `file_hash` · `detect_encoding` | `PyYAML`, `chardet` (optional) |
+| **calc-toolkit** | `eval_expression` · `convert_unit` · `basic_stats` | stdlib |
+| **text-gen** | `lorem_words` · `lorem_paragraphs` · `generate_sentences` · `generate_data` | stdlib |
+| **batch-ops** | `batch_rename` · `batch_find_replace` · `batch_stats` · `batch_copy` | stdlib |
+
+### Guidance & diagnostics
+
+| Toolset | Functions | Dependencies |
+|---------|-----------|-------------|
+| **debug-toolkit** | `analyze_error` · `extract_log_patterns` | stdlib |
+| **webapp-testing-toolkit** | `check_url` · `extract_urls` | stdlib |
+| **doc-coauthoring-toolkit** | `document_outline` · `markdown_template` | stdlib |
+| **internal-comms-toolkit** | `comms_template` · `format_bullets` | stdlib |
+| **stuck-toolkit** | doc-only — no code bindings | — |
+
+---
+
+## Project Structure
 
 ```
-┌──────────────┐     publish      ┌──────────────────┐
-│  toolset.py  │ ────────────────→│  ToolStore        │
-│  + doc.md    │                  │  Registry (HF)    │
-└──────────────┘                  └────────┬─────────┘
-                                          │
-    ┌──────────┐    toolstore update      │
-    │  Agent   │ ←────────────────────────┘
-    │          │
-    │  tool_   │    execute              ┌──────────────┐
-    │  store() │ ───────────────────────→│  temp dir     │
-    │          │                        │  + pip deps   │
-    └──────────┘                        │  + import     │
-                                         │  + call fn    │
-                                         └──────────────┘
+AgentToolStore/
+├── client/                          # Python SDK (pip install toolstore)
+│   ├── pyproject.toml
+│   └── src/toolstore/
+│       ├── cli.py                   # Typer CLI (update, search, use, publish, …)
+│       ├── native_tool.py           # tool_store_tool() — the agent-facing entry point
+│       ├── toolset.py               # @tool decorator + schema generation
+│       ├── toolset_manager.py       # AST-based toolset discovery & publishing
+│       ├── exec_tools.py            # Local + remote toolset execution
+│       ├── config_manager.py        # Settings, registry URL, env-var overrides
+│       ├── mcp_client.py            # MCP client (stdio / SSE transport)
+│       ├── mcp_server.py            # MCP server — expose ToolStore via MCP
+│       ├── index_manager.py         # Local index cache
+│       ├── transport.py             # stdio / SSE / streamable-http transports
+│       ├── skill_manager.py         # Agent Skills loader + discovery
+│       ├── skill_discovery.py       # Skill directory scanner
+│       ├── schema_converter.py      # Convert ToolStore schemas to OpenAI format
+│       ├── management/              # Web UI (Flask + REST APIs)
+│       │   ├── server.py
+│       │   ├── api_helpers.py
+│       │   ├── api_mcp.py
+│       │   ├── api_skills.py
+│       │   └── static/
+│       │       └── app.js
+│       └── docker_pool.py           # Docker container pool (optional)
+│
+├── server/                          # Registry server (FastAPI + SQLite)
+│   ├── Dockerfile                   # HF Spaces deployment
+│   ├── requirements.txt
+│   ├── init_db.py
+│   └── app/
+│       ├── main.py                  # FastAPI app — browse page, API, auth
+│       ├── models.py                # Pydantic models (ToolSet, Binding, …)
+│       ├── database.py              # SQLite with HF Storage Bucket
+│       ├── db.py                    # Connection helper
+│       └── auth.py                  # JWT auth + user management
+│
+├── toolsets/                        # All 14 published toolsets
+│   ├── xlsx-toolkit/
+│   ├── pdf-toolkit/
+│   ├── docx-toolkit/
+│   ├── pptx-toolkit/
+│   ├── text-transform/
+│   ├── file-verify/
+│   ├── calc-toolkit/
+│   ├── text-gen/
+│   ├── batch-ops/
+│   ├── debug-toolkit/
+│   ├── webapp-testing-toolkit/
+│   ├── doc-coauthoring-toolkit/
+│   ├── internal-comms-toolkit/
+│   └── stuck-toolkit/
+│
+├── Dockerfile                       # Root Dockerfile (HF Spaces entry point)
+├── _publish_toolsets.py             # Utility: batch-publish all toolsets
+├── LICENSE                          # MIT
+└── README.md
 ```
-
-Toolsets execute **in‑process** — no Docker, no sandbox. Code is fetched from
-the registry on demand, written to a temp directory, dependencies installed
-(explicitly, not automatically), then imported and called.
-
-**Safety model:** same as skills. All code is visible in the registry.
-Dependencies are never auto‑installed — the agent sees what's needed and
-decides whether to install.
 
 ---
 
 ## Development
 
-### Setup
-
 ```bash
 git clone https://github.com/Mrw33554432/AgentToolStore.git
 cd AgentToolStore
 pip install -e client/
-```
 
-### Run tests
+# Run a local registry for testing
+cd server && pip install -r requirements.txt && python init_db.py
+uvicorn app.main:app --port 8000 &
 
-```bash
-# Test a toolset locally
-python3 -c "
-import importlib.util
-spec = importlib.util.spec_from_file_location('ts', 'toolsets/text-transform/toolset.py')
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-print(mod.text_stats(text='Hello world.'))
-"
+# Point the CLI at your local registry
+export TOOLSTORE_REGISTRY_URL=http://localhost:8000/index.json
 
-# Test via CLI
+# Test a toolset
 toolstore use text-transform --function text_stats text="Hello world."
 ```
-
-### Registry
-
-The default registry is the public HF Space:
-```
-https://mrw33554432-agenttoolstore.hf.space/index.json
-```
-
-Change it via settings or `TOOLSTORE_REGISTRY_URL` env var.
 
 ---
 
 ## Contributing
 
-1. Write a toolset: `toolsets/<name>/toolset.py` + `doc.md`
-2. Use `@tool` decorator on every callable function
-3. Never add placeholder functions — code or nothing
-4. Test via `toolstore use` before submitting
-5. PR against `main`
+1. Write a toolset (`toolsets/<name>/toolset.py` + `doc.md`)
+2. Decorate every callable function with `@tool`
+3. Use keyword-only arguments with type hints and Google-style docstrings
+4. List dependencies in `requirements.txt`
+5. Test with `toolstore use <name> --function <fn> <args>`
+6. Open a PR against `main`
+
+---
+
+## Remaining Work
+
+- **xlsx / pdf / docx / pptx testing** — these toolsets need `openpyxl`,
+  `pdfplumber`, `python-docx`, and `python-pptx` installed in the test
+  environment for full integration tests
+- **Rate limiting** — the registry server has no rate limiting on public
+  endpoints
+- **Large payload handling** — docx/pptx toolset bindings can be large;
+  better error handling for oversized publishes
 
 ---
 
