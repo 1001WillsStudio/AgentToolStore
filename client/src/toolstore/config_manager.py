@@ -79,7 +79,10 @@ class ConfigManager:
         # Env var overrides everything — used in CI / ephemeral contexts
         if os.environ.get("TOOLSTORE_REGISTRY_URL"):
             return os.environ["TOOLSTORE_REGISTRY_URL"]
-        return self.config.get("registry_url", "http://localhost:8000/online_index")
+        return self.config.get(
+            "registry_url",
+            "https://mrw33554432-agenttoolstore.hf.space/index.json",
+        )
 
     # ----------------------------------------------------------------
     # MCP servers
