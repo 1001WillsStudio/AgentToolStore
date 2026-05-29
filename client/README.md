@@ -14,8 +14,8 @@ It provides four things:
 |-----------|-------------|
 | **`tool_store_tool()`** | The single function agents call to search, inspect, and execute toolsets |
 | **CLI** | `toolstore update`, `toolstore use`, `toolstore publish`, … |
-| **Management UI** | `toolstore serve` — web dashboard for tools, skills, MCP servers |
-| **MCP bridge** | `toolstore mcp-server serve` — expose ToolStore as an MCP server |
+| **Management UI** | `python -m toolstore.management.server` — web dashboard for tools, skills, MCP |
+| **MCP bridge** | `toolstore serve` — expose ToolStore as an MCP server (stdio or SSE) |
 
 For the full project overview, see the [main README](../README.md).
 
@@ -224,18 +224,18 @@ toolstore login --username <u> --password <p>
 toolstore toolset publish ./path/to/toolkit
 toolstore delete my-toolkit
 
-# Management UI
-toolstore serve                          # web dashboard on :8765
+# MCP server
+toolstore serve                              # run as MCP server (stdio)
 
-# MCP bridge
-toolstore mcp-server serve               # expose ToolStore via MCP (stdio)
+# Management UI (separate process)
+python -m toolstore.management.server        # web dashboard on :8765
 
 # Export
 toolstore export                         # meta-tool schema for OpenAI/vLLM
 
 # Skills
 toolstore skill discover /path/to/skills
-toolstore skill list
+toolstore skill list-dirs
 ```
 
 ### All commands
@@ -250,7 +250,7 @@ toolstore skill list
 | `publish` | Publish or update a tool |
 | `delete` | Remove a tool from the registry |
 | `export` | Export the meta-tool schema (OpenAI / vLLM) |
-| `serve` | Start the management web UI |
+| `serve` | Run ToolStore as an MCP server (stdio or SSE) |
 | `skill` | Discover, list, and register Agent Skills |
 | `toolset` | Publish, list, and inspect toolsets |
 | `mcp-server` | Register and manage MCP servers |
@@ -260,13 +260,19 @@ toolstore skill list
 
 ## Management UI
 
-`toolstore serve` starts a web dashboard at `http://127.0.0.1:8765`:
+Start it as a standalone process (no CLI command — runs as its own HTTP server):
 
-- **Tools tab** — view all active tools across MCP, skills, and toolsets
-- **MCP Servers tab** — add/remove/connect MCP servers
-- **Skills tab** — upload ZIPs or register skill directories
-- **Toolsets tab** — register local toolsets, download from registry
-- **Registry tab** — browse published toolsets on the registry
+```bash
+python -m toolstore.management.server
+```
+
+Opens at `http://127.0.0.1:8765` with tabs for:
+
+- **Tools** — view all active tools across MCP, skills, and toolsets
+- **MCP Servers** — add/remove/connect MCP servers
+- **Skills** — upload ZIPs or register skill directories
+- **Toolsets** — register local toolsets, download from registry
+- **Registry** — browse published toolsets on the registry
 
 The UI is a single-page app (`management/static/index.html` + `app.js`) with
 a REST API served by the built-in `ManagementServer` class.
@@ -275,15 +281,16 @@ a REST API served by the built-in `ManagementServer` class.
 
 ## MCP Bridge
 
-The client can act as an MCP server (`toolstore mcp-server serve`), exposing
-the full ToolStore ecosystem to any MCP-compatible host (Claude Desktop,
-Continue, etc.):
+The `toolstore serve` command runs ToolStore as an MCP server, exposing
+the full ecosystem to any MCP-compatible host (Claude Desktop, Continue, …):
 
-- **stdio** mode — for local MCP hosts
-- **SSE** mode — `toolstore mcp-server serve --transport sse --port 9090`
+```bash
+toolstore serve                                  # stdio (default)
+toolstore serve --transport sse --port 9090      # SSE for remote hosts
+```
 
-The MCP client (`mcp_client.py`) handles connecting to third-party MCP servers
-over stdio, SSE, or streamable-HTTP transports.
+The MCP client (`mcp_client.py`) handles connecting to third-party MCP
+servers over stdio, SSE, or streamable-HTTP transports.
 
 ---
 
@@ -291,8 +298,8 @@ over stdio, SSE, or streamable-HTTP transports.
 
 The client also manages Agent Skills (`skills-general/` format: `SKILL.md`
 per skill). Use `toolstore skill discover` to scan directories, `toolstore
-skill list` to view registered skills. Skills appear as `skill:<name>` tools
-in the agent's tool list.
+skill list-dirs` to view registered skill directories. Skills appear as
+`skill:<name>` tools in the agent's tool list.
 
 ---
 

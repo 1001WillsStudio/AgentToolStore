@@ -33,26 +33,25 @@ dozens of tools by hand.
 ## How it works
 
 ```
- ┌──────────────────────┐
- │ Your agent            │
- │                       │
- │  tool_store(          │     search / info       ┌─────────────────────┐
- │    action="search",   │ ──────────────────────→ │ Registry (HF Space) │
- │    query="parse xlsx" │ ←────────────────────── │ FastAPI + SQLite    │
- │  )                    │     list of toolsets     └─────────────────────┘
- │                       │
- │  tool_store(          │     execute             ┌─────────────────────┐
- │    action="execute",  │ ──────────────────────→ │ In-process runner    │
- │    tool_name="xlsx-", │                        │ Fetch code → tmpdir  │
- │    arguments={...}    │ ←────────────────────── │ pip deps → import   │
- │  )                    │     JSON result         │ → call → return      │
- └──────────────────────┘                         └─────────────────────┘
+toolstore update                     ← downloads index.json from registry
+       │
+       ▼
+┌─────────────────────────┐
+│  Local index cache       │  ← search and info read from here (no network)
+└─────────────────────────┘
+       │
+       ▼
+┌─────────────────────────┐
+│  tool_store(execute)     │  ← fetches code from registry on demand
+│  → temp dir → import     │     runs in-process, no Docker
+│  → call function → JSON  │
+└─────────────────────────┘
 ```
 
-1. **Search** the registry for tools by name, description, or tag
-2. **Inspect** a toolset to see its functions, parameters, and docs
-3. **Execute** any function — code is fetched on demand, deps installed
-explicitly, runs in-process with no Docker
+1. **`toolstore update`** pulls the registry index and caches it locally
+2. **`search` / `info`** read from the local cache — instant, no network
+3. **`execute`** fetches code from the registry, installs deps explicitly,
+runs in-process, returns JSON
 
 ---
 
@@ -257,11 +256,8 @@ toolstore toolset publish ./toolsets/my-toolkit
 # Delete a toolset
 toolstore delete my-toolkit
 
-# Run the management web UI
+# Run ToolStore as an MCP server (stdio or SSE)
 toolstore serve
-
-# Run as an MCP server (stdio or SSE)
-toolstore mcp-server serve
 
 # Export the tool_store schema for use with OpenAI / vLLM
 toolstore export
@@ -283,7 +279,7 @@ Full command reference:
 | `publish` | Publish a new tool or update an existing one |
 | `delete` | Remove a tool from the registry |
 | `export` | Export the meta-tool schema (OpenAI / vLLM formats) |
-| `serve` | Run the management web UI |
+| `serve` | Run ToolStore as an MCP server (stdio or SSE) |
 | `skill` | Manage Agent Skills (discover, list, create) |
 | `toolset` | Manage toolsets (publish, list, inspect) |
 | `mcp-server` | Register and manage MCP servers |
@@ -346,14 +342,14 @@ Spaces. All endpoints are public except auth and publish.
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/` | GET | No | Browse page (HTML) showing all published toolsets |
-| `/index.json` | GET | No | Full index of all toolsets with metadata and bindings |
-| `/online_index` | GET | No | Lightweight index with only `name`, `version`, `description` |
-| `/toolset/{name}` | GET | No | Single toolset with full bindings |
-| `/search?q=...` | GET | No | Search toolsets by name or description |
-| `/auth/token` | POST | No | Login — returns JWT token |
-| `/publish` | POST | JWT | Publish or update a toolset |
-| `/toolset/{name}` | DELETE | JWT | Delete a toolset |
+| `/` | GET | No | Browse page (HTML) — dark-themed cards showing all published toolsets |
+| `/api` | GET | No | API root |
+| `/health` | GET | No | Health check — database connectivity status |
+| `/index.json` | GET | No | Full index — every toolset with metadata, bindings, and full source code |
+| `/auth/register` | POST | No | Register a new user account |
+| `/auth/token` | POST | No | Login — returns JWT access token (OAuth2 password flow) |
+| `/publish` | POST | JWT | Publish a new toolset or update an existing one |
+| `/tools/{name}` | DELETE | JWT | Delete a toolset |
 
 ### Running your own registry
 
@@ -424,7 +420,7 @@ AgentToolStore/
 │       ├── skill_manager.py         # Agent Skills loader + discovery
 │       ├── skill_discovery.py       # Skill directory scanner
 │       ├── schema_converter.py      # Convert ToolStore schemas to OpenAI format
-│       ├── management/              # Web UI (Flask + REST APIs)
+│       ├── management/              # Management server + SPA (custom HTTP server)
 │       │   ├── server.py
 │       │   ├── api_helpers.py
 │       │   ├── api_mcp.py

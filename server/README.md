@@ -11,9 +11,8 @@ pinned: false
 # AgentToolStore Registry Server
 
 <p align="center">
-  <strong>FastAPI + SQLite registry for agent toolsets. The shared index that
-  powers <code>toolstore update</code>, <code>toolstore search</code>, and
-  <code>tool_store</code> on every agent.</strong>
+  <strong>FastAPI + SQLite registry for agent toolsets. The shared index
+  pulled by <code>toolstore update</code> on every agent.</strong>
 </p>
 
 ---
@@ -30,14 +29,14 @@ and the detailed bindings that agents need at execution time.
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/` | GET | No | Browse page (HTML) — dark-themed cards showing all published toolsets |
-| `/index.json` | GET | No | Full index — every toolset with metadata, bindings, and full source code |
-| `/online_index` | GET | No | Lightweight index — only `name`, `version`, `description` per toolset |
-| `/search?q=...` | GET | No | Search toolsets by name or description |
-| `/toolset/{name}` | GET | No | Single toolset with full bindings (params, types, docstrings) |
+| `/` | GET | No | Browse page (HTML) — cards for every published toolset |
+| `/api` | GET | No | API root |
+| `/health` | GET | No | Health check — database connectivity status |
+| `/index.json` | GET | No | Full index — every toolset with metadata, bindings, and source code |
+| `/auth/register` | POST | No | Register a new user account |
 | `/auth/token` | POST | No | Login — returns JWT access token (OAuth2 password flow) |
 | `/publish` | POST | JWT | Publish a new toolset or update an existing one |
-| `/toolset/{name}` | DELETE | JWT | Delete a toolset |
+| `/tools/{name}` | DELETE | JWT | Delete a toolset |
 
 ### Example: publish flow
 
