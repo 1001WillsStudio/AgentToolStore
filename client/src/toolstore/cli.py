@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from toolstore import __version__
 from toolstore.config_manager import ConfigManager
 from toolstore.index_manager import IndexManager
 from toolstore.skill_manager import SkillDefinition, get_skill_manager
@@ -1189,7 +1190,7 @@ def serve(
     server = ToolStoreMCPServer(index_manager, config_manager, sm)
 
     if mode == "stdio":
-        console.print(f"[bold green]ToolStore MCP Server v2.0.0[/bold green] "
+        console.print(f"[bold green]ToolStore MCP Server v{__version__}[/bold green] "
                       f"— listening on stdio")
         server.run_stdio()
 
@@ -1245,7 +1246,7 @@ def serve(
                     await q.put(msg)
             return {"status": "accepted"}
 
-        console.print(f"[bold green]ToolStore MCP Server v2.0.0[/bold green] "
+        console.print(f"[bold green]ToolStore MCP Server v{__version__}[/bold green] "
                       f"— SSE on {host}:{port}")
         uvicorn.run(app_fast, host=host, port=port)
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config_manager import ConfigManager
-from ..mcp_client import FullMCPClient, disconnect_all
+from ..mcp_client import FullMCPClient, disconnect_all, _connection_pool, _pool_lock
 
 # ── Constants ──
 
@@ -62,12 +62,19 @@ def save_config(cfg: dict) -> None:
 
 # ── MCP connection state ──
 
-_connected_clients: dict[str, FullMCPClient] = {}
 _mcp_processes: dict[str, subprocess.Popen] = {}
 
 
 def mcp_status(server_id: str) -> str:
-    return "connected" if server_id in _connected_clients else "disconnected"
+    """Check if an MCP server is connected, using the authoritative pool."""
+    client = _connection_pool.get(server_id)
+    if client is not None and client.is_connected():
+        return "connected"
+    # Prune stale entries
+    if client is not None:
+        with _pool_lock:
+            _connection_pool.pop(server_id, None)
+    return "disconnected"
 
 
 def _start_mcp_folder(server_id: str, srv: dict) -> bool:
@@ -110,7 +117,8 @@ def connect_and_discover(server_id: str, srv: dict) -> list[dict]:
     })
     client.connect()
     tools_info = client.list_tools()
-    _connected_clients[server_id] = client
+    with _pool_lock:
+        _connection_pool[server_id] = client
     tool_list = tools_info.get("tools", []) if isinstance(tools_info, dict) else (
         tools_info if isinstance(tools_info, list) else [])
     tools: list[dict] = []
@@ -136,14 +144,17 @@ def shutdown_mcp_process(server_id: str) -> None:
 
 def disconnect_server(server_id: str) -> None:
     shutdown_mcp_process(server_id)
-    client = _connected_clients.pop(server_id, None)
+    with _pool_lock:
+        client = _connection_pool.pop(server_id, None)
     if client:
         try: client.disconnect()
         except Exception: pass
 
 
 def disconnect_all_clients() -> None:
-    for cid in list(_connected_clients.keys()):
+    with _pool_lock:
+        server_ids = list(_connection_pool.keys())
+    for cid in server_ids:
         disconnect_server(cid)
     for pid in list(_mcp_processes.keys()):
         shutdown_mcp_process(pid)

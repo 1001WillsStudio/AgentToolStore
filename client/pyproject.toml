@@ -4,20 +4,71 @@ build-backend = "hatchling.build"
 
 [project]
 name = "toolstore"
-version = "2.0.0"
+version = "0.2.0"
 description = "ToolStore v2 — MCP Client + Skills Manager + MCP Server. The universal tool platform for AI agents."
 readme = "README.md"
-requires-python = ">=3.9"
-license = "MIT"
+requires-python = ">=3.10"
+license = {text = "MIT"}
 authors = [
     { name = "ToolStore Team" },
 ]
+keywords = [
+    "ai",
+    "agent",
+    "mcp",
+    "tools",
+    "tool-calling",
+    "function-calling",
+    "llm",
+    "registry",
+    "skills",
+    "toolset",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
+]
 dependencies = [
-    "typer[all]>=0.9.0",
+    "typer>=0.9.0",
     "httpx>=0.25.0",
     "pydantic>=2.5.0",
     "rich>=13.6.0",
 ]
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.0.0",
+]
+docker = [
+    "docker>=7.0.0",
+]
+sse = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+manager = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+full = [
+    "toolstore[mcp,docker,sse,manager]",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mrw33554432/AgentToolStore"
+Repository = "https://github.com/Mrw33554432/AgentToolStore"
+Issues = "https://github.com/Mrw33554432/AgentToolStore/issues"
+Documentation = "https://github.com/Mrw33554432/AgentToolStore/blob/main/client/README.md"
 
 [project.scripts]
 toolstore = "toolstore.cli:app"
@@ -26,6 +77,14 @@ toolstore = "toolstore.cli:app"
 packages = ["src/toolstore"]
 include = [
     "src/toolstore/management/static/**/*",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
 ]
 
 [tool.pytest.ini_options]
