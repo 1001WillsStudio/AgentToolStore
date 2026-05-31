@@ -134,7 +134,7 @@ class _Handler(SimpleHTTPRequestHandler):
                 return self._respond(*api_skills.remove_skill(
                     p.split("/")[-1]))
             if p.startswith("/api/toolsets/"):
-                return self._remove_toolset(p.split("/")[-1])
+                return self._remove_toolset(urllib.parse.unquote(p.split("/")[-1]))
             self._json({"error": "Not found"}, 404)
         except Exception as exc:
             self._json({"error": str(exc)}, 500)
