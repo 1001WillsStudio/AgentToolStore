@@ -50,6 +50,7 @@ const api = {
   listSkills()          { return this._fetch('GET', '/api/skills'); },
   registerSkill(cfg)    { return this._fetch('POST', '/api/skills', cfg); },
   uploadSkill(payload)  { return this._fetch('POST', '/api/skills/upload', payload); },
+  uploadToolset(payload){ return this._fetch('POST', '/api/toolsets/upload', payload); },
   registerFolder(cfg)   { return this._fetch('POST', '/api/skills/folder', cfg); },
   removeSkill(name)     { return this._fetch('DELETE', `/api/skills/${name}`); },
   patchTool(name, cfg)  { return this._fetch('PATCH', `/api/tools/${name}`, cfg); },
@@ -451,8 +452,8 @@ document.getElementById('form-toolset').addEventListener('submit', async functio
         reader.readAsDataURL(zipBlob);
       });
 
-      // Upload as a skill-zip then discover toolsets from the extracted contents
-      var res = await api.uploadSkill({ archive: base64 });
+      // Upload as toolset folder — discover toolset.py inside the zip
+      var res = await api.uploadToolset({ archive: base64 });
       var regList = res.registered || [];
       var failList = res.failed || [];
       var msg = 'Uploaded ' + regList.length + ' item' + (regList.length !== 1 ? 's' : '');

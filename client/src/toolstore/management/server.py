@@ -21,6 +21,15 @@ from typing import Any
 
 from .api_helpers import disconnect_all_clients, disconnect_server, _config_manager
 from . import api_mcp, api_skills
+import os
+import tempfile
+import zipfile
+import base64
+import shutil
+from io import BytesIO
+from ..toolset_manager import ToolsetDefinition
+from ..config_manager import ConfigManager
+from ..index_manager import IndexManager
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -70,6 +79,8 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             if p == "/api/skills/upload":
                 return self._upload_skill()
+            if p == "/api/toolsets/upload":
+                return self._upload_toolset()
             body = self._body()
             if p == "/api/mcp/code":
                 return self._run_mcp_code(body)
@@ -242,6 +253,64 @@ class _Handler(SimpleHTTPRequestHandler):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    # ── API: toolset upload ──────────────────────────────────────────
+
+    def _upload_toolset(self):
+
+        try: body = self._body()
+        except Exception: return self._json({"error": "Invalid JSON body"}, 400)
+
+        archive_b64 = body.get("archive", "")
+        if not archive_b64:
+            return self._json({"error": "No 'archive' field in upload"}, 400)
+        try: zip_data = base64.b64decode(archive_b64)
+        except Exception: return self._json({"error": "Invalid base64 data"}, 400)
+
+        tmp = Path(tempfile.mkdtemp(prefix="toolstore-toolset-"))
+        try:
+            with zipfile.ZipFile(BytesIO(zip_data)) as zf: zf.extractall(tmp)
+            # Find toolset directories: any dir containing toolset.py
+            toolset_dirs = []
+            for root, dirs, _files in os.walk(tmp):
+                for d in dirs:
+                    if (Path(root) / d / "toolset.py").exists():
+                        toolset_dirs.append(Path(root) / d)
+
+            if not toolset_dirs:
+                return self._json({"error": "No toolset found in uploaded archive (requires toolset.py)"}, 400)
+
+            cm = ConfigManager(); cm.load()
+            im = IndexManager(); im.load()
+            persistent_root = cm.config_dir / "toolsets"
+            persistent_root.mkdir(parents=True, exist_ok=True)
+            registered, failed = [], []
+
+            for ts_dir in toolset_dirs:
+                td = ToolsetDefinition(ts_dir)
+                if not td.load():
+                    failed.append({"name": ts_dir.name, "error": "; ".join(td.errors)})
+                    continue
+                dest = persistent_root / td.name
+                if not dest.exists():
+                    shutil.copytree(ts_dir, dest)
+                im._local_tools[td.name] = {
+                    "name": td.name,
+                    "type": "toolset",
+                    "source": "local",
+                    "toolset_dir": str(dest),
+                    "description": td.doc[:200] if td.doc else "",
+                    "doc": td.doc or "",
+                    "bindings": td.functions,
+                }
+                registered.append(td.name)
+
+            im._save_local()
+            self._json({"success": True, "registered": registered, "failed": failed})
+        except zipfile.BadZipFile:
+            self._json({"error": "Uploaded file is not a valid zip archive"}, 400)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     # ── API: toolsets + registry toolsets ─────────────────────────────
 
     def _list_toolsets(self):
@@ -351,7 +420,7 @@ class _Handler(SimpleHTTPRequestHandler):
     def _list_registry_toolsets(self):
         """Return online toolsets from the registry index."""
         cm = _config_manager()
-        ip = cm.config_dir / "index.json"
+        ip = _config_manager().config_dir / "online_registry.json"
 
         # Refresh: delete cache so we re‑fetch from registry
         q = urllib.parse.urlparse(self.path).query
@@ -376,7 +445,8 @@ class _Handler(SimpleHTTPRequestHandler):
             return self._json({})
 
         from ..index_manager import IndexManager
-        im = IndexManager(); im.load()
+        im = IndexManager()
+        im.load()
         local_names = set(im._local_tools.keys())
         result = {}
 
@@ -421,7 +491,8 @@ class _Handler(SimpleHTTPRequestHandler):
         import json, base64
         name = body.get("name", "").strip()
         if not name: return self._json({"error": "name is required"}, 400)
-        cm = _config_manager(); ip = cm.config_dir / "index.json"
+        cm = _config_manager()
+        ip = _config_manager().config_dir / "online_registry.json"
         if not ip.exists(): return self._json({"error": "Registry index not found"}, 404)
         try: data = json.loads(ip.read_text())
         except Exception: return self._json({"error": "Failed to read registry index"}, 500)
@@ -566,7 +637,8 @@ class _Handler(SimpleHTTPRequestHandler):
                     "parallel_safe": ti.get("parallel_safe", False),
                     "subagent_safe": ti.get("subagent_safe", False),
                     "description": ti.get("description", "")}
-        cm = _config_manager(); ip = cm.config_dir / "index.json"
+        cm = _config_manager()
+        ip = _config_manager().config_dir / "online_registry.json"
         if ip.exists():
             try:
                 data = json.loads(ip.read_text())

@@ -16,7 +16,6 @@ class IndexManager:
 
         self.registry_file = self.config_dir / "online_registry.json"
         self._local_registry_file = self.config_dir / "local_registry.json"
-        self._legacy_file = self.config_dir / "index.json"  # pre-rename
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.index_data: Dict[str, Any] = {"meta": {}, "tools": {}}
         self._local_tools: Dict[str, Dict[str, Any]] = {}
@@ -26,11 +25,7 @@ class IndexManager:
     # ----------------------------------------------------------------
 
     def load(self):
-        """Load remote registry AND local registry from disk into memory.
-        Auto-migrates from old 'index.json' name on first access."""
-        # Migration: if online_registry.json doesn't exist but index.json does, rename it
-        if not self.registry_file.exists() and self._legacy_file.exists():
-            self._legacy_file.rename(self.registry_file)
+        """Load remote registry AND local registry from disk into memory."""
 
         if self.registry_file.exists():
             try:

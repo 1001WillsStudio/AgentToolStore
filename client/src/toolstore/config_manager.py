@@ -21,7 +21,6 @@ class ConfigManager:
             self.config_dir = Path.home() / ".toolstore"
 
         self.config_file = self.config_dir / "settings.json"
-        self._legacy_file = self.config_dir / "config.json"  # pre-rename
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config = self._load_defaults()
 
@@ -52,10 +51,7 @@ class ConfigManager:
     # ----------------------------------------------------------------
 
     def load(self):
-        """Load settings from disk. Auto-migrates from old 'config.json' name."""
-        # Migration: if settings.json doesn't exist but config.json does, rename it
-        if not self.config_file.exists() and self._legacy_file.exists():
-            self._legacy_file.rename(self.config_file)
+        """Load settings from disk."""
 
         if self.config_file.exists():
             try:
