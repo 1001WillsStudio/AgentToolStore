@@ -70,12 +70,12 @@ class ToolsetDefinition:
                 self._errors.append(f"Failed to read toolset.py: {exc}")
                 return False
 
-        # Valid if we have a doc or at least one @tool function
-        if self.doc or self.functions:
+        # Valid if we have a doc (code bindings are optional)
+        if self.doc:
             self._valid = True
             return True
 
-        self._errors.append("No doc.md or @tool functions found")
+        self._errors.append("No doc.md found — toolset must have documentation")
         return False
 
     # ------------------------------------------------------------------
