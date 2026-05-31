@@ -29,6 +29,7 @@ import shutil
 from io import BytesIO
 from ..toolset_manager import ToolsetDefinition, get_toolset_manager
 from ..index_manager import IndexManager
+from ..config_manager import ConfigManager
 from ..skill_discovery import discover_skills
 from ..skill_manager import get_skill_manager
 from ..docker_pool import check_docker_available, dind_socket_check
@@ -292,11 +293,15 @@ class _Handler(SimpleHTTPRequestHandler):
                 if not td.load():
                     failed.append({"name": ts_dir.name, "error": "; ".join(td.errors)})
                     continue
-                dest = persistent_root / td.name
+                # Derive name from doc heading or fall back to dir name
+                name = td.name
+                if td.doc and td.doc.startswith("#"):
+                    name = td.doc.split("\n")[0].lstrip("#").strip()
+                dest = persistent_root / name
                 if not dest.exists():
                     shutil.copytree(ts_dir, dest)
-                im._local_tools[td.name] = {
-                    "name": td.name,
+                im._local_tools[name] = {
+                    "name": name,
                     "type": "toolset",
                     "source": "local",
                     "toolset_dir": str(dest),
@@ -304,7 +309,7 @@ class _Handler(SimpleHTTPRequestHandler):
                     "doc": td.doc or "",
                     "bindings": td.functions,
                 }
-                registered.append(td.name)
+                registered.append(name)
 
             im._save_local()
             self._json({"success": True, "registered": registered, "failed": failed})
