@@ -24,7 +24,7 @@ For the full project overview, see the [main README](../README.md).
 ## Installation
 
 ```bash
-pip install toolstore
+pip install agent-tool-store
 ```
 
 Or from source:
@@ -35,7 +35,7 @@ cd AgentToolStore/client
 pip install -e .
 ```
 
-Requirements: Python ≥3.10, `httpx`, `pydantic`, `rich`, `typer`.
+Requirements: Python ≥3.10, `httpx`, `rich`, `typer`.
 
 ---
 
