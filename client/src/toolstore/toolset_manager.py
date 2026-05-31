@@ -56,33 +56,27 @@ class ToolsetDefinition:
                 self._errors.append(f"Failed to read doc.md: {exc}")
         # doc.md is optional — fine if missing
 
-        # -- toolset.py -----------------------------------------------
+        # -- toolset.py (optional) -----------------------------------
         code_path = self.directory / "toolset.py"
-        if not code_path.exists():
-            self._errors.append("Missing toolset.py")
-            return False
+        if code_path.exists():
+            try:
+                source = code_path.read_text(encoding="utf-8")
+                tree = ast.parse(source)
+                self.functions = self._extract_tool_functions(tree)
+            except SyntaxError as exc:
+                self._errors.append(f"Syntax error in toolset.py: {exc}")
+                return False
+            except Exception as exc:
+                self._errors.append(f"Failed to read toolset.py: {exc}")
+                return False
 
-        try:
-            source = code_path.read_text(encoding="utf-8")
-        except Exception as exc:
-            self._errors.append(f"Failed to read toolset.py: {exc}")
-            return False
+        # Valid if we have a doc or at least one @tool function
+        if self.doc or self.functions:
+            self._valid = True
+            return True
 
-        try:
-            tree = ast.parse(source)
-        except SyntaxError as exc:
-            self._errors.append(f"Syntax error in toolset.py: {exc}")
-            return False
-
-        self.functions = self._extract_tool_functions(tree)
-        if not self.functions:
-            self._errors.append(
-                "No @tool-decorated functions found in toolset.py"
-            )
-            return False
-
-        self._valid = True
-        return True
+        self._errors.append("No doc.md or @tool functions found")
+        return False
 
     # ------------------------------------------------------------------
     # AST extraction
