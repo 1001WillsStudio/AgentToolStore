@@ -1,6 +1,6 @@
 """ToolStore - Universal tool manager for AI agents."""
 
-__version__ = "2.1.2"
+__version__ = "2.1.3"
 
 from .management.server import ManagementServer
 from .native_tool import get_secondary_tool_names

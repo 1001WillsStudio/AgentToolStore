@@ -268,13 +268,15 @@ class _Handler(SimpleHTTPRequestHandler):
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-toolset-"))
         try:
             with zipfile.ZipFile(BytesIO(zip_data)) as zf: zf.extractall(tmp)
-            # Find toolset directories: any dir containing at least one .md file
+            # Find toolset dirs: any dir (including root) with a .md file
             toolset_dirs = []
             for root, dirs, _files in os.walk(tmp):
                 for d in dirs:
-                    md_files = list((Path(root) / d).glob("*.md"))
-                    if md_files:
+                    if list((Path(root) / d).glob("*.md")):
                         toolset_dirs.append(Path(root) / d)
+            # The zip may place files directly at root (no wrapper folder)
+            if list(tmp.glob("*.md")):
+                toolset_dirs.append(tmp)
 
             if not toolset_dirs:
                 return self._json({"error": "No toolset found in uploaded archive (requires at least one .md file)"}, 400)
