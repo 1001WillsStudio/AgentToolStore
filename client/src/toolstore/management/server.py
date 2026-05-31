@@ -27,9 +27,13 @@ import zipfile
 import base64
 import shutil
 from io import BytesIO
-from ..toolset_manager import ToolsetDefinition
-from ..config_manager import ConfigManager
+from ..toolset_manager import ToolsetDefinition, get_toolset_manager
 from ..index_manager import IndexManager
+from ..skill_discovery import discover_skills
+from ..skill_manager import get_skill_manager
+from ..docker_pool import check_docker_available, dind_socket_check
+import uuid
+import subprocess
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -204,11 +208,6 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: skills upload ────────────────────────────────────────────
 
     def _upload_skill(self):
-        from ..skill_discovery import discover_skills
-        import tempfile, zipfile, base64, shutil
-        from io import BytesIO
-        from ..config_manager import ConfigManager
-        from ..skill_manager import get_skill_manager
 
         try: body = self._body()
         except Exception: return self._json({"error": "Invalid JSON body"}, 400)
@@ -316,7 +315,6 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _list_toolsets(self):
         """Return local toolsets from local_registry.json — the single source of truth."""
-        from ..index_manager import IndexManager
         im = IndexManager()
         im.load()
         result = {}
@@ -331,10 +329,6 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json(result)
 
     def _register_toolset(self, body: dict):
-        import shutil
-        from pathlib import Path
-        from ..config_manager import ConfigManager
-        from ..toolset_manager import ToolsetDefinition
         path = body.get("path", "").strip()
         if not path: return self._json({"error": "path is required"}, 400)
         ts_path = Path(path).expanduser().resolve()
@@ -350,7 +344,6 @@ class _Handler(SimpleHTTPRequestHandler):
         if not dest.exists():
             shutil.copytree(ts_path, dest)
         # Register in the local registry (single source of truth)
-        from ..index_manager import IndexManager
         im = IndexManager()
         im.load()
         im._local_tools[td.name] = {
@@ -367,9 +360,6 @@ class _Handler(SimpleHTTPRequestHandler):
                     "functions": list(td.functions.keys()), "path": str(dest)})
 
     def _register_toolset_folder(self, body: dict):
-        from pathlib import Path
-        from ..config_manager import ConfigManager
-        from ..toolset_manager import get_toolset_manager
         path = body.get("path", "").strip()
         if not path: return self._json({"error": "path is required"}, 400)
         fp = Path(path).expanduser().resolve()
@@ -377,9 +367,7 @@ class _Handler(SimpleHTTPRequestHandler):
         cm = ConfigManager(); cm.load(); cm.add_toolset_dir(str(fp))
         mgr = get_toolset_manager([str(fp)]); count = mgr.scan()
 
-        from ..index_manager import IndexManager
-        im = IndexManager()
-        im.load()
+        im = IndexManager(); im.load()
         registered = []
         for td in mgr.get_all():
             if not td.is_valid:
@@ -399,8 +387,6 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _remove_toolset(self, name: str):
         """Remove a local toolset — single source of truth: local_registry.json."""
-        import shutil
-        from ..index_manager import IndexManager
 
         im = IndexManager()
         im.load()
@@ -445,7 +431,6 @@ class _Handler(SimpleHTTPRequestHandler):
         except Exception:
             return self._json({})
 
-        from ..index_manager import IndexManager
         im = IndexManager()
         im.load()
         local_names = set(im._local_tools.keys())
@@ -489,7 +474,6 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json(result)
 
     def _download_toolset(self, body: dict):
-        import json, base64
         name = body.get("name", "").strip()
         if not name: return self._json({"error": "name is required"}, 400)
         cm = _config_manager()
@@ -505,14 +489,17 @@ class _Handler(SimpleHTTPRequestHandler):
         if not tdef or tdef.get("type") != "toolset":
             return self._json({"error": f"Toolset '{name}' not found in registry"}, 404)
         root = cm.config_dir / "toolsets"; (root / name).mkdir(parents=True, exist_ok=True)
+        # Write doc.md (required)
+        doc = tdef.get("doc", "") or tdef.get("description", "")
+        (root / name / "doc.md").write_text(doc, encoding="utf-8")
+        # Write toolset.py (optional)
         code = tdef.get("code", "")
         if not code and tdef.get("code_base64"):
             code = base64.b64decode(tdef["code_base64"]).decode("utf-8")
-        (root / name / "toolset.py").write_text(code, encoding="utf-8")
+        if code:
+            (root / name / "toolset.py").write_text(code, encoding="utf-8")
 
-        from ..index_manager import IndexManager
-        im = IndexManager()
-        im.load()
+        im = IndexManager(); im.load()
         im._local_tools[name] = {
             "name": name,
             "type": "toolset",
@@ -528,8 +515,6 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: run code in Docker ───────────────────────────────────────
 
     def _run_mcp_code(self, body: dict):
-        import tempfile, uuid, shutil, subprocess
-        from ..docker_pool import check_docker_available, dind_socket_check
         code = (body.get("code") or "").strip()
         if not code: return self._json({"error": "No code provided"}, 400)
         language = body.get("language", "python").lower()
@@ -588,7 +573,6 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: tools list / patch ───────────────────────────────────────
 
     def _list_tools(self):
-        import json
         cfg = api_mcp.load_config()
         servers = cfg.get("mcpServers", {})
         result = {"mcp": {}, "mcp_toolsets": {}, "registry": {}, "toolsets": {}, "skills": {}}
@@ -667,7 +651,6 @@ class _Handler(SimpleHTTPRequestHandler):
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
             except Exception: pass
-        from ..index_manager import IndexManager
         im = IndexManager(); im.load()
         for name, entry in im._local_tools.items():
             if entry.get("type") != "toolset":
@@ -683,7 +666,6 @@ class _Handler(SimpleHTTPRequestHandler):
     def _patch_tool(self, name: str, body: dict):
         cfg = api_mcp.load_config()
         tools = cfg.setdefault("tools", {})
-        from ..index_manager import IndexManager
         im = IndexManager(); im.load()
         in_local = name in im._local_tools
         target = tools if name in tools else (im._local_tools if in_local else None)

@@ -1,16 +1,13 @@
 """
 ToolsetManager — discovers toolsets on disk, parses them, and feeds the index.
 
-A *toolset* is a directory containing exactly two meaningful files::
+A *toolset* is a directory containing a ``doc.md`` file (required) and an
+optional ``toolset.py`` with ``@tool``-decorated entry points::
 
-    my-toolset/
-    ├── doc.md        # agent-facing documentation (plain Markdown)
-    └── toolset.py    # Python code with @tool-decorated entry points
-
-The directory name is the tool name.  ``doc.md`` becomes the tool
-description.  ``toolset.py`` is parsed with the ``ast`` module so we can
-extract ``@tool`` function signatures without importing or executing
-anything.
+The directory name is the tool name.  ``doc.md`` provides the tool
+description.  ``toolset.py`` (optional) is parsed with the ``ast`` module
+so we can extract ``@tool`` function signatures without importing or
+executing anything.
 
 Unlike skills, toolsets are **agent-centric**: the agent calls
 ``tool_store(action="execute", tool_name="...")`` and it just runs.  There
@@ -40,10 +37,9 @@ class ToolsetDefinition:
     # ------------------------------------------------------------------
 
     def load(self) -> bool:
-        """Read *doc.md* and parse *toolset.py*.
+        """Read *doc.md* (required) and parse *toolset.py* (optional).
 
-        Returns ``True`` if the toolset is valid (has at least one
-        ``@tool``-decorated function).
+        Returns ``True`` if the toolset has a valid ``doc.md``.
         """
         self._errors.clear()
 
@@ -54,7 +50,7 @@ class ToolsetDefinition:
                 self.doc = doc_path.read_text(encoding="utf-8").strip()
             except Exception as exc:
                 self._errors.append(f"Failed to read doc.md: {exc}")
-        # doc.md is optional — fine if missing
+        # doc.md is required — checked below
 
         # -- toolset.py (optional) -----------------------------------
         code_path = self.directory / "toolset.py"
@@ -283,7 +279,7 @@ class ToolsetManager:
     def scan(self) -> int:
         """Walk all configured directories looking for toolset directories.
 
-        A directory is a *toolset* if it contains a ``toolset.py`` file.
+        A directory is a *toolset* if it contains a ``doc.md`` file.
 
         Returns the number of newly discovered (or updated) toolsets.
         """
@@ -296,16 +292,16 @@ class ToolsetManager:
             for entry in base_dir.iterdir():
                 if not entry.is_dir():
                     continue
-                code_path = entry / "toolset.py"
-                if not code_path.exists():
+                doc_path = entry / "doc.md"
+                if not doc_path.exists():
                     continue
 
                 # Already loaded? Skip unless the file is newer
                 existing = self._toolsets.get(entry.name)
                 if existing is not None:
-                    # Quick check: has toolset.py been modified?
+                    # Quick check: has doc.md been modified?
                     try:
-                        mtime = code_path.stat().st_mtime
+                        mtime = doc_path.stat().st_mtime
                     except OSError:
                         continue
                     # We can't easily track mtimes of loaded definitions,
@@ -341,7 +337,7 @@ class ToolsetManager:
         the toolset was found and successfully reloaded."""
         for base_dir in self._directories:
             candidate = base_dir / name
-            if candidate.is_dir() and (candidate / "toolset.py").exists():
+            if candidate.is_dir() and (candidate / "doc.md").exists():
                 td = ToolsetDefinition(candidate)
                 ok = td.load()
                 if ok:
