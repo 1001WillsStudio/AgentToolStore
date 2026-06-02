@@ -2,7 +2,7 @@
 
 __version__ = "2.1.6"
 
-from .management.server import ManagementServer
+from toolstore_webui.server import ManagementServer
 from .native_tool import (
     get_secondary_tool_names,
     get_primary_tool_names,

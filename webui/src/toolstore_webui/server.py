@@ -1,12 +1,14 @@
 """
-Local management server for the ToolStore client.
+Local management server for the ToolStore platform.
 
 Serves the management SPA and provides a REST API for:
   - Local config, MCP server management, skill registration,
     toolset management, registry toolsets, tool exposure control.
 
 Start it::
-    python -m toolstore.management.server
+
+    toolstore-webui --port 8765
+    python -m toolstore_webui.server
 """
 
 from __future__ import annotations
@@ -19,27 +21,38 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-from .api_helpers import disconnect_all_clients, disconnect_server, _config_manager, _index_manager
-from . import api_mcp, api_skills
+# ── API handlers live in the client package ───────────────────────────
+from toolstore.management.api_helpers import (
+    disconnect_all_clients,
+    disconnect_server,
+    _config_manager,
+    _index_manager,
+    load_config as api_load_config,
+    save_config as api_save_config,
+    connect_and_discover as api_connect_and_discover,
+)
+from toolstore.management import api_mcp
+from toolstore.management import api_skills
+
+from toolstore.toolset_manager import ToolsetDefinition, get_toolset_manager
+from toolstore.index_manager import IndexManager
+from toolstore.config_manager import ConfigManager
+from toolstore.skill_discovery import discover_skills
+from toolstore.skill_manager import get_skill_manager
+from toolstore.docker_pool import check_docker_available, dind_socket_check
+
 import os
 import tempfile
 import zipfile
 import base64
 import shutil
 from io import BytesIO
-from ..toolset_manager import ToolsetDefinition, get_toolset_manager
-from ..index_manager import IndexManager
-from ..config_manager import ConfigManager
-from ..skill_discovery import discover_skills
-from ..skill_manager import get_skill_manager
-from ..docker_pool import check_docker_available, dind_socket_check
 import uuid
 import subprocess
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
-MANAGEMENT_DIR = Path(__file__).resolve().parent
-STATIC_DIR = MANAGEMENT_DIR / "static"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_PORT = 8765
 
 
@@ -152,7 +165,8 @@ class _Handler(SimpleHTTPRequestHandler):
     def _serve_spa(self):
         fp = STATIC_DIR / "index.html"
         if not fp.exists():
-            self._json({"error": "SPA not found"}, 500); return
+            self._json({"error": "SPA not found"}, 500)
+            return
         data = fp.read_bytes()
         self.send_response(200)
         self._cors()
@@ -165,9 +179,11 @@ class _Handler(SimpleHTTPRequestHandler):
         rel = path[len("/static/"):].replace("\\", "/").lstrip("/")
         fp = STATIC_DIR / rel
         if not fp.resolve().is_relative_to(STATIC_DIR.resolve()):
-            self._json({"error": "Forbidden"}, 403); return
+            self._json({"error": "Forbidden"}, 403)
+            return
         if not fp.is_file():
-            self._json({"error": "Not found"}, 404); return
+            self._json({"error": "Not found"}, 404)
+            return
         data = fp.read_bytes()
         ct = {
             ".html": "text/html; charset=utf-8",
@@ -195,8 +211,10 @@ class _Handler(SimpleHTTPRequestHandler):
         entries = []
         try:
             for child in sorted(fp.iterdir()):
-                try: is_dir = child.is_dir()
-                except OSError: is_dir = False
+                try:
+                    is_dir = child.is_dir()
+                except OSError:
+                    is_dir = False
                 entries.append({
                     "name": child.name,
                     "type": "directory" if is_dir else "file",
@@ -209,36 +227,45 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: skills upload ────────────────────────────────────────────
 
     def _upload_skill(self):
-
-        try: body = self._body()
-        except Exception: return self._json({"error": "Invalid JSON body"}, 400)
+        try:
+            body = self._body()
+        except Exception:
+            return self._json({"error": "Invalid JSON body"}, 400)
 
         archive_b64 = body.get("archive", "")
         if not archive_b64:
             return self._json({"error": "No 'archive' field in upload"}, 400)
-        try: zip_data = base64.b64decode(archive_b64)
-        except Exception: return self._json({"error": "Invalid base64 data"}, 400)
+        try:
+            zip_data = base64.b64decode(archive_b64)
+        except Exception:
+            return self._json({"error": "Invalid base64 data"}, 400)
 
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-skill-"))
         try:
-            with zipfile.ZipFile(BytesIO(zip_data)) as zf: zf.extractall(tmp)
+            with zipfile.ZipFile(BytesIO(zip_data)) as zf:
+                zf.extractall(tmp)
             result = discover_skills(tmp)
             if result.total == 0:
                 return self._json({"error": "No SKILL.md found in uploaded archive"}, 400)
-            cm = ConfigManager(); cm.load()
+            cm = ConfigManager()
+            cm.load()
             sm = get_skill_manager(cm.get_skill_dirs())
             registered, failed = [], []
             for ds in result.valid_skills:
                 try:
                     inst = sm.install_skill(ds.skill_def.skill_dir)
-                    if inst: registered.append(inst.name)
-                    else: failed.append({"name": ds.name, "error": "install returned None"})
+                    if inst:
+                        registered.append(inst.name)
+                    else:
+                        failed.append({"name": ds.name, "error": "install returned None"})
                 except Exception as exc:
                     failed.append({"name": ds.name, "error": str(exc)})
             for ds in result.invalid_skills:
                 failed.append({"name": ds.name or str(ds.rel_path), "error": "; ".join(ds.errors)})
-            for d in sm.skill_dirs: cm.add_skill_dir(str(d))
-            cfg = api_mcp.load_config(); cfg.setdefault("skills", {})
+            for d in sm.skill_dirs:
+                cm.add_skill_dir(str(d))
+            cfg = api_mcp.load_config()
+            cfg.setdefault("skills", {})
             for name in registered:
                 cfg["skills"][name] = {
                     "source": f"skill:{name}", "enabled": True,
@@ -256,19 +283,23 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: toolset upload ──────────────────────────────────────────
 
     def _upload_toolset(self):
-
-        try: body = self._body()
-        except Exception: return self._json({"error": "Invalid JSON body"}, 400)
+        try:
+            body = self._body()
+        except Exception:
+            return self._json({"error": "Invalid JSON body"}, 400)
 
         archive_b64 = body.get("archive", "")
         if not archive_b64:
             return self._json({"error": "No 'archive' field in upload"}, 400)
-        try: zip_data = base64.b64decode(archive_b64)
-        except Exception: return self._json({"error": "Invalid base64 data"}, 400)
+        try:
+            zip_data = base64.b64decode(archive_b64)
+        except Exception:
+            return self._json({"error": "Invalid base64 data"}, 400)
 
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-toolset-"))
         try:
-            with zipfile.ZipFile(BytesIO(zip_data)) as zf: zf.extractall(tmp)
+            with zipfile.ZipFile(BytesIO(zip_data)) as zf:
+                zf.extractall(tmp)
             toolset_dirs = []
             for root, dirs, _files in os.walk(tmp):
                 for d in dirs:
@@ -280,8 +311,10 @@ class _Handler(SimpleHTTPRequestHandler):
             if not toolset_dirs:
                 return self._json({"error": "No toolset found in uploaded archive (requires at least one .md file)"}, 400)
 
-            cm = ConfigManager(); cm.load()
-            im = IndexManager(); im.load()
+            cm = ConfigManager()
+            cm.load()
+            im = IndexManager()
+            im.load()
             persistent_root = cm.config_dir / "toolsets"
             persistent_root.mkdir(parents=True, exist_ok=True)
             registered, failed = [], []
@@ -337,12 +370,16 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _register_toolset(self, body: dict):
         path = body.get("path", "").strip()
-        if not path: return self._json({"error": "path is required"}, 400)
+        if not path:
+            return self._json({"error": "path is required"}, 400)
         ts_path = Path(path).expanduser().resolve()
-        if not ts_path.is_dir(): return self._json({"error": f"Not a directory: {ts_path}"}, 400)
+        if not ts_path.is_dir():
+            return self._json({"error": f"Not a directory: {ts_path}"}, 400)
         td = ToolsetDefinition(ts_path)
-        if not td.load(): return self._json({"error": "Toolset validation failed", "details": td.errors}, 400)
-        cm = ConfigManager(); cm.load()
+        if not td.load():
+            return self._json({"error": "Toolset validation failed", "details": td.errors}, 400)
+        cm = ConfigManager()
+        cm.load()
         persistent_root = cm.config_dir / "toolsets"
         persistent_root.mkdir(parents=True, exist_ok=True)
         dest = persistent_root / td.name
@@ -368,13 +405,19 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _register_toolset_folder(self, body: dict):
         path = body.get("path", "").strip()
-        if not path: return self._json({"error": "path is required"}, 400)
+        if not path:
+            return self._json({"error": "path is required"}, 400)
         fp = Path(path).expanduser().resolve()
-        if not fp.is_dir(): return self._json({"error": f"Not a directory: {fp}"}, 400)
-        cm = ConfigManager(); cm.load(); cm.add_toolset_dir(str(fp))
-        mgr = get_toolset_manager([str(fp)]); count = mgr.scan()
+        if not fp.is_dir():
+            return self._json({"error": f"Not a directory: {fp}"}, 400)
+        cm = ConfigManager()
+        cm.load()
+        cm.add_toolset_dir(str(fp))
+        mgr = get_toolset_manager([str(fp)])
+        count = mgr.scan()
 
-        im = IndexManager(); im.load()
+        im = IndexManager()
+        im.load()
         registered = []
         for td in mgr.get_all():
             if not td.is_valid:
@@ -479,19 +522,24 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _download_toolset(self, body: dict):
         name = body.get("name", "").strip()
-        if not name: return self._json({"error": "name is required"}, 400)
+        if not name:
+            return self._json({"error": "name is required"}, 400)
         cm = _config_manager()
         ip = _config_manager().config_dir / "online_registry.json"
-        if not ip.exists(): return self._json({"error": "Registry index not found"}, 404)
-        try: data = json.loads(ip.read_text())
-        except Exception: return self._json({"error": "Failed to read registry index"}, 500)
+        if not ip.exists():
+            return self._json({"error": "Registry index not found"}, 404)
+        try:
+            data = json.loads(ip.read_text())
+        except Exception:
+            return self._json({"error": "Failed to read registry index"}, 500)
         if isinstance(data, list):
             tdef = next((t for t in data if isinstance(t, dict) and t.get("name") == name), None)
         else:
             tdef = data.get("tools", {}).get(name)
         if not tdef or tdef.get("type") != "toolset":
             return self._json({"error": f"Toolset '{name}' not found in registry"}, 404)
-        root = cm.config_dir / "toolsets"; (root / name).mkdir(parents=True, exist_ok=True)
+        root = cm.config_dir / "toolsets"
+        (root / name).mkdir(parents=True, exist_ok=True)
         doc = tdef.get("doc", "") or tdef.get("description", "")
         (root / name / "doc.md").write_text(doc, encoding="utf-8")
         code = tdef.get("code", "")
@@ -500,7 +548,8 @@ class _Handler(SimpleHTTPRequestHandler):
         if code:
             (root / name / "toolset.py").write_text(code, encoding="utf-8")
 
-        im = IndexManager(); im.load()
+        im = IndexManager()
+        im.load()
         im._local_tools[name] = {
             "name": name,
             "type": "toolset",
@@ -520,7 +569,8 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _run_mcp_code(self, body: dict):
         code = (body.get("code") or "").strip()
-        if not code: return self._json({"error": "No code provided"}, 400)
+        if not code:
+            return self._json({"error": "No code provided"}, 400)
         language = body.get("language", "python").lower()
         if language not in ("python", "node"):
             return self._json({"error": "Unsupported language. Use 'python' or 'node'."}, 400)
@@ -528,7 +578,8 @@ class _Handler(SimpleHTTPRequestHandler):
             "python:3.12-slim" if language == "python" else "node:22-slim")
         server_label = body.get("server_id", "").strip() or f"mcp-code-{uuid.uuid4().hex[:8]}"
         err = dind_socket_check() or check_docker_available()
-        if err: return self._json({"error": err}, 500)
+        if err:
+            return self._json({"error": err}, 500)
 
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-mcp-code-"))
         try:
@@ -545,7 +596,8 @@ class _Handler(SimpleHTTPRequestHandler):
             if bp.returncode != 0:
                 return self._json({"error": "Docker build failed",
                                    "details": bp.stderr[-1000:]}, 500)
-        finally: shutil.rmtree(tmp, ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
         cfg = api_mcp.load_config()
         servers = cfg.setdefault("mcp_servers", {})
@@ -561,7 +613,7 @@ class _Handler(SimpleHTTPRequestHandler):
         tools, conn_err = [], None
         if srv.get("auto_connect", True):
             try:
-                tools = api_mcp.connect_and_discover(server_label, srv)
+                tools = api_connect_and_discover(server_label, srv)
                 srv_tools = cfg.setdefault("mcp_servers", {}).setdefault(server_label, {}).setdefault("tools", {})
                 for t in tools:
                     srv_tools[t["name"]] = {
@@ -570,7 +622,8 @@ class _Handler(SimpleHTTPRequestHandler):
                         "parallel_safe": False, "subagent_safe": False,
                         "description": t.get("description", "")}
                 api_mcp.save_config(cfg)
-            except Exception as exc: conn_err = str(exc)
+            except Exception as exc:
+                conn_err = str(exc)
         self._json({"success": True, "server_id": server_label, "image": tag,
                     "tools_discovered": len(tools), "tools": tools,
                     "connection_error": conn_err})
@@ -653,10 +706,12 @@ class _Handler(SimpleHTTPRequestHandler):
                             "enabled": True, "exposure": "hidden",
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
-            except Exception: pass
+            except Exception:
+                pass
 
         # Local toolsets (from local_registry.json)
-        im = IndexManager(); im.load()
+        im = IndexManager()
+        im.load()
         for name, entry in im._local_tools.items():
             if entry.get("type") != "toolset":
                 continue
@@ -675,7 +730,8 @@ class _Handler(SimpleHTTPRequestHandler):
         persistence so there is no possibility of a stale read/write race
         between the temp IM and the :mod:`api_helpers` singleton.
         """
-        im = IndexManager(); im.load()
+        im = IndexManager()
+        im.load()
 
         target: dict | None = None
         target_key: str = ""
@@ -722,9 +778,12 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
-        if length == 0: return {}
-        try: return json.loads(self.rfile.read(length))
-        except json.JSONDecodeError: return {}
+        if length == 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length))
+        except json.JSONDecodeError:
+            return {}
 
     def _json(self, data: dict, status: int = 200):
         body = json.dumps(data, indent=2).encode()
@@ -751,6 +810,7 @@ class ManagementServer:
     """Local management server for ToolStore.
 
     Usage::
+
         server = ManagementServer(port=8765)
         server.start()   # non-blocking background thread
         server.stop()
@@ -770,9 +830,12 @@ class ManagementServer:
         self._httpd = HTTPServer((self.host, self.port), _Handler)
         if blocking:
             print(f"ToolStore management UI → {self.url}")
-            try: self._httpd.serve_forever()
-            except KeyboardInterrupt: pass
-            finally: disconnect_all_clients()
+            try:
+                self._httpd.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                disconnect_all_clients()
         else:
             self._thread = threading.Thread(
                 target=self._httpd.serve_forever, daemon=True)
