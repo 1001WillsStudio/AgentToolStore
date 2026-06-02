@@ -469,7 +469,7 @@ def get_primary_tool_schemas() -> list[dict]:
                 continue
             if ts_info.get("exposure") != "primary":
                 continue
-            ts_dir = ts_info.get("directory", "")
+            ts_dir = ts_info.get("directory") or ts_info.get("toolset_dir", "")
             if not ts_dir:
                 continue
             try:
@@ -597,7 +597,7 @@ def get_primary_tool_prompt() -> str:
             fn_names.sort()
 
             # ── doc.md full body ─────────────────────────────────
-            ts_dir = ts_info.get("directory", "")
+            ts_dir = ts_info.get("directory") or ts_info.get("toolset_dir", "")
             doc = ""
             if ts_dir:
                 doc_path = Path(ts_dir) / "doc.md"
@@ -665,7 +665,7 @@ def execute_tool_direct(name: str, kwargs: dict) -> str:
             "name": ts_name,
             "type": "toolset",
             "bindings": ts_info.get("bindings", {}),
-            "toolset_dir": ts_info.get("directory", ""),
+            "toolset_dir": ts_info.get("directory") or ts_info.get("toolset_dir", ""),
             "code": ts_info.get("code", ""),
             "code_base64": ts_info.get("code_base64", ""),
             "requirements": ts_info.get("requirements", []),
@@ -809,7 +809,7 @@ def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     """Self-contained toolset execution — no external imports needed."""
     import base64
-    import importlib
+    import importlib, importlib.util
     import subprocess
     import sys
     import tempfile
