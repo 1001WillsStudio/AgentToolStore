@@ -312,6 +312,11 @@ class _Handler(SimpleHTTPRequestHandler):
                 registered.append(name)
 
             im._save_local()
+            # Mirror to settings.json so primary-tool functions see them
+            cfg_up = api_mcp.load_config()
+            for name in registered:
+                cfg_up.setdefault("toolsets", {})[name] = im._local_tools[name]
+            api_mcp.save_config(cfg_up)
             self._json({"success": True, "registered": registered, "failed": failed})
         except zipfile.BadZipFile:
             self._json({"error": "Uploaded file is not a valid zip archive"}, 400)
@@ -363,6 +368,10 @@ class _Handler(SimpleHTTPRequestHandler):
             "bindings": td.functions,
         }
         im._save_local()
+        # Mirror to settings.json so primary-tool functions see it
+        cfg = api_mcp.load_config()
+        cfg.setdefault("toolsets", {})[td.name] = im._local_tools[td.name]
+        api_mcp.save_config(cfg)
         self._json({"success": True, "toolset": td.name,
                     "functions": list(td.functions.keys()), "path": str(dest)})
 
@@ -390,6 +399,11 @@ class _Handler(SimpleHTTPRequestHandler):
             }
             registered.append(td.name)
         im._save_local()
+        # Mirror to settings.json so primary-tool functions see it
+        cfg = api_mcp.load_config()
+        for name in registered:
+            cfg.setdefault("toolsets", {})[name] = im._local_tools[name]
+        api_mcp.save_config(cfg)
         self._json({"success": True, "registered": registered, "count": count})
 
     def _remove_toolset(self, name: str):
@@ -408,7 +422,10 @@ class _Handler(SimpleHTTPRequestHandler):
         # Remove from the only source of truth
         del im._local_tools[name]
         im._save_local()
-
+        # Also remove from settings.json
+        cfg_rm = api_mcp.load_config()
+        cfg_rm.get("toolsets", {}).pop(name, None)
+        api_mcp.save_config(cfg_rm)
         self._json({"success": True})
 
     def _list_registry_toolsets(self):
@@ -517,6 +534,10 @@ class _Handler(SimpleHTTPRequestHandler):
             "bindings": tdef.get("bindings", {}),
         }
         im._save_local()
+        # Mirror to settings.json so primary-tool functions see it
+        cfg_set = api_mcp.load_config()
+        cfg_set.setdefault("toolsets", {})[name] = im._local_tools[name]
+        api_mcp.save_config(cfg_set)
         self._json({"success": True, "toolset": name})
 
     # ── API: run code in Docker ───────────────────────────────────────
@@ -665,7 +686,7 @@ class _Handler(SimpleHTTPRequestHandler):
             result["toolsets"][name] = {
                 "source": entry.get("source", f"toolset:{name}"),
                 "enabled": True,
-                "exposure": "secondary",
+                "exposure": entry.get("exposure", "secondary"),
                 "parallel_safe": False, "subagent_safe": False,
                 "description": entry.get("description", "")}
         self._json(result)
@@ -686,8 +707,18 @@ class _Handler(SimpleHTTPRequestHandler):
                         return self._json(res, code)
             return self._json({"error": "Tool not found"}, 404)
         for k in ("exposure", "enabled", "parallel_safe", "subagent_safe"):
-            if k in body: target[name][k] = body[k]
-        api_mcp.save_config(cfg)
+            if k in body:
+                target[name][k] = body[k]
+        # Persist – tools live in settings.json, toolsets live in local_registry.json.
+        # For toolsets we must sync BOTH locations: local_registry.json (Web UI)
+        # and settings.json (primary-tool functions read from cfg["toolsets"]).
+        if target is tools:
+            api_mcp.save_config(cfg)
+        else:
+            im._save_local()
+            # Mirror to settings.json so get_primary_tool_* functions see it
+            cfg.setdefault("toolsets", {})[name] = im._local_tools[name]
+            api_mcp.save_config(cfg)
         self._json({"success": True, "tool": name})
 
     # ── helpers ───────────────────────────────────────────────────────
