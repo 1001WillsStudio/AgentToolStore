@@ -169,3 +169,23 @@ def flatten_mcp_content(content_list: List[Dict[str, Any]]) -> str:
 
 
 import json
+from typing import Callable
+
+
+# ---------------------------------------------------------------------------
+# Python @tool callable → OpenAI function schema
+# ---------------------------------------------------------------------------
+
+def callable_to_openai(fn: Callable) -> dict:
+    """Convert a @tool-decorated Python callable to an OpenAI function-calling schema.
+
+    Uses ``toolset.generate_definition()`` to derive the schema from type hints
+    and docstring, then wraps it in the ``{"type": "function", "function": ...}``
+    envelope that OpenAI API expects.
+    """
+    from toolstore.toolset import generate_definition
+    inner = generate_definition(fn)
+    return {
+        "type": "function",
+        "function": inner,
+    }

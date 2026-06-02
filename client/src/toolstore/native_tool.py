@@ -11,7 +11,7 @@ Supports three tool types:
 from __future__ import annotations
 
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Optional
 
 from toolstore.index_manager import IndexManager
 from toolstore.config_manager import ConfigManager
@@ -373,6 +373,266 @@ def get_secondary_tool_names() -> list[str]:
     names.extend(sorted(mcp_servers.keys()))
 
     return names
+
+
+# ---------------------------------------------------------------------------
+# Primary tool helpers — tools exposed directly to the LLM as native schemas
+# ---------------------------------------------------------------------------
+
+# Native AuroraCoder tool names that primary tools must NOT collide with.
+_NATIVE_NAMES: set[str] = {
+    "google_search", "web_browser", "read_file", "write_file",
+    "edit_file", "delete_file", "close_file", "list_directory",
+    "search_files", "run_terminal_command", "tool_store",
+    "subagent", "continue_as_new_chat",
+}
+
+
+def _primary_log():
+    """Lazy logger for primary-tool warnings."""
+    import logging
+    return logging.getLogger("toolstore.primary")
+
+
+def get_primary_tool_names() -> list[str]:
+    """Return function names of all primary‑exposed tools.
+
+    For toolset‑level primary exposure every ``@tool`` function inside the
+    toolset becomes a primary tool.  For individual primary tools (MCP,
+    skills) the tool name itself is returned.
+
+    Always reloads config from disk.
+    """
+    config_manager.load()
+    names: list[str] = []
+
+    toolsets = config_manager.config.get("toolsets", {})
+    if isinstance(toolsets, dict):
+        for info in toolsets.values():
+            if not isinstance(info, dict):
+                continue
+            if info.get("exposure") != "primary":
+                continue
+            bindings = info.get("bindings", {})
+            names.extend(bindings.keys())
+
+    tools = config_manager.config.get("tools", {})
+    if isinstance(tools, dict):
+        for t_name, t_info in tools.items():
+            if isinstance(t_info, dict) and t_info.get("exposure") == "primary":
+                names.append(t_name)
+
+    return sorted(set(names))
+
+
+def get_primary_tool_schemas() -> list[dict]:
+    """Get OpenAI function‑calling schemas for every primary tool.
+
+    For toolset‑level primary exposure the toolset ``.py`` file is loaded
+    and each ``@tool`` callable is converted to an OpenAI schema via
+    :func:`callable_to_openai`.  For individual primary tools the index
+    definition is converted via :func:`toolstore_to_openai`.
+
+    Tools whose names collide with native AuroraCoder tools are skipped
+    with a warning.
+    """
+    config_manager.load()
+    schemas: list[dict] = []
+    seen: set[str] = set()
+
+    # ── 1. Primary toolsets — load .py → @tool → schema ────────────────
+    toolsets = config_manager.config.get("toolsets", {})
+    if isinstance(toolsets, dict):
+        for ts_name, ts_info in toolsets.items():
+            if not isinstance(ts_info, dict):
+                continue
+            if ts_info.get("exposure") != "primary":
+                continue
+            ts_dir = ts_info.get("directory", "")
+            if not ts_dir:
+                continue
+            try:
+                schemas.extend(
+                    _load_primary_toolset_schemas(ts_name, ts_dir, seen)
+                )
+            except Exception as exc:
+                _primary_log().warning(
+                    "Failed to load primary toolset '%s': %s", ts_name, exc
+                )
+
+    # ── 2. Primary individual tools (MCP, skills) ──────────────────────
+    tools = config_manager.config.get("tools", {})
+    if isinstance(tools, dict):
+        for t_name, t_info in tools.items():
+            if not isinstance(t_info, dict):
+                continue
+            if t_info.get("exposure") != "primary":
+                continue
+            if t_name in _NATIVE_NAMES or t_name in seen:
+                continue
+            index_manager.load()
+            tool_def = index_manager.get_tool(t_name)
+            if tool_def:
+                try:
+                    schema = toolstore_to_openai(tool_def)
+                    schemas.append(schema)
+                    seen.add(t_name)
+                except Exception:
+                    pass
+
+    return schemas
+
+
+def _load_primary_toolset_schemas(
+    ts_name: str, ts_dir: str, seen: set[str]
+) -> list[dict]:
+    """Load a primary toolset from disk and return OpenAI schemas."""
+    import importlib.util
+    from pathlib import Path
+    from toolstore.toolset import clear_registry, get_tool_names as _gn, get_tool
+    from toolstore.schema_converter import callable_to_openai
+
+    ts_file = Path(ts_dir) / "toolset.py"
+    if not ts_file.exists():
+        _primary_log().warning(
+            "Primary toolset '%s': toolset.py not found at %s", ts_name, ts_dir
+        )
+        return []
+
+    clear_registry()
+    spec = importlib.util.spec_from_file_location(
+        f"_primary_{ts_name}", str(ts_file)
+    )
+    if spec is None or spec.loader is None:
+        return []
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    result: list[dict] = []
+    for fn_name in _gn():
+        if fn_name in _NATIVE_NAMES:
+            _primary_log().warning(
+                "Primary tool '%s' from toolset '%s' collides with a "
+                "native AuroraCoder tool — skipping",
+                fn_name, ts_name,
+            )
+            continue
+        if fn_name in seen:
+            _primary_log().warning(
+                "Primary tool '%s' from toolset '%s' already claimed by "
+                "another toolset — skipping",
+                fn_name, ts_name,
+            )
+            continue
+        fn = get_tool(fn_name)
+        if fn is None:
+            continue
+        schema = callable_to_openai(fn)
+        result.append(schema)
+        seen.add(fn_name)
+
+    clear_registry()
+    return result
+
+
+def get_primary_tool_prompt() -> str:
+    """Build a compact text block listing primary tools for the system message.
+
+    Format: one line per function with its description, e.g.::
+
+        - calculator — Evaluate a mathematical expression
+        - echo_service — Send a message and get an echo reply
+
+    Returns an empty string when no primary tools are configured.
+    """
+    config_manager.load()
+    lines: list[str] = []
+
+    toolsets = config_manager.config.get("toolsets", {})
+    if isinstance(toolsets, dict):
+        for ts_name, ts_info in toolsets.items():
+            if not isinstance(ts_info, dict):
+                continue
+            if ts_info.get("exposure") != "primary":
+                continue
+            bindings = ts_info.get("bindings", {})
+            for fn_name, fn_info in bindings.items():
+                if fn_name in _NATIVE_NAMES:
+                    continue
+                desc = (
+                    fn_info.get("description", "")
+                    if isinstance(fn_info, dict)
+                    else ""
+                )
+                if desc:
+                    lines.append(f"- {fn_name} — {desc}")
+                else:
+                    lines.append(f"- {fn_name}")
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
+    """Find the toolset that owns a primary tool function ``name``.
+
+    Returns ``(toolset_name, toolset_info_dict)`` or ``None``.
+    """
+    config_manager.load()
+    toolsets = config_manager.config.get("toolsets", {})
+    if isinstance(toolsets, dict):
+        for ts_name, ts_info in toolsets.items():
+            if not isinstance(ts_info, dict):
+                continue
+            if ts_info.get("exposure") != "primary":
+                continue
+            bindings = ts_info.get("bindings", {})
+            if name in bindings:
+                return (ts_name, ts_info)
+    return None
+
+
+def execute_tool_direct(name: str, kwargs: dict) -> str:
+    """Execute a primary tool by function name — no ``tool_store`` dispatch.
+
+    Looks up the function in primary toolsets' bindings; falls back to the
+    standard ``_do_execute`` path for individual tools (MCP, skills).
+
+    The LLM calls primary tools directly (e.g. ``calculator("1+2")``) —
+    this is the entry point that routes those calls to the right backend.
+    """
+    # 1. Toolset-level primary: find which toolset owns this function
+    found = _find_primary_toolset(name)
+    if found is not None:
+        ts_name, ts_info = found
+        tool = {
+            "name": ts_name,
+            "type": "toolset",
+            "bindings": ts_info.get("bindings", {}),
+            "toolset_dir": ts_info.get("directory", ""),
+            "code": ts_info.get("code", ""),
+            "code_base64": ts_info.get("code_base64", ""),
+            "requirements": ts_info.get("requirements", []),
+        }
+        if "function" not in kwargs:
+            kwargs = dict(kwargs)
+            kwargs["function"] = name
+        return _execute_toolset_inline(tool, kwargs)
+
+    # 2. Individual primary tools (MCP, skills) — standard dispatch
+    return _do_execute(name, kwargs)
+
+
+def prefetch_primary_tools() -> int:
+    """Eager‑load all primary toolsets and cache their schemas.
+
+    Called once at agent startup.  Returns the number of primary tools
+    found.  Logs warnings for toolsets that fail to load or whose
+    function names collide with native tools.
+    """
+    return len(get_primary_tool_schemas())
 
 
 # ---------------------------------------------------------------------------
