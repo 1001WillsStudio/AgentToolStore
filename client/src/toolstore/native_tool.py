@@ -514,8 +514,11 @@ def get_primary_tool_schemas() -> list[dict]:
         if t_name in _NATIVE_NAMES or t_name in seen:
             continue
         try:
-            # MCP tools already carry inputSchema — convert directly
-            schema = mcp_to_openai(t_info)
+            # Older tool entries may lack "name" and "inputSchema" —
+            # the tool name is the dict key; fill it in before conversion.
+            ti_copy = dict(t_info)
+            ti_copy.setdefault("name", t_name)
+            schema = mcp_to_openai(ti_copy)
             schemas.append(schema)
             seen.add(t_name)
         except Exception:
@@ -535,7 +538,10 @@ def get_primary_tool_schemas() -> list[dict]:
             if tn in _NATIVE_NAMES or tn in seen:
                 continue
             try:
-                schema = mcp_to_openai(ti)
+                # Same as Step 2 — older entries may lack "name" field
+                ti_copy = dict(ti)
+                ti_copy.setdefault("name", tn)
+                schema = mcp_to_openai(ti_copy)
                 schemas.append(schema)
                 seen.add(tn)
             except Exception:
