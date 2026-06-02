@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+from toolstore.config_manager import ConfigManager
+from toolstore.toolset_manager import ToolsetDefinition
+
 
 class IndexManager:
     def __init__(self, config_dir: Optional[Path] = None):
@@ -11,8 +14,7 @@ class IndexManager:
             self.config_dir = config_dir
         else:
             # Use same resolution as ConfigManager — respects TOOLSTORE_HOME
-            from toolstore.config_manager import ConfigManager as _CM
-            self.config_dir = _CM().config_dir
+            self.config_dir = ConfigManager().config_dir
 
         self.registry_file = self.config_dir / "online_registry.json"
         self._local_registry_file = self.config_dir / "local_registry.json"
@@ -96,7 +98,6 @@ class IndexManager:
     def _migrate_from_settings(self) -> None:
         """Pull legacy MCP servers & skills from settings.json into local_registry.json."""
         try:
-            from toolstore.config_manager import ConfigManager
             cm = ConfigManager()
             cm.load()
             mcp = cm.config.pop("mcpServers", {})
@@ -133,7 +134,6 @@ class IndexManager:
         These are *never* written to ``online_registry.json`` — the two indices stay
         completely separate.  Queries transparently merge both sources.
         """
-        from toolstore.toolset_manager import ToolsetDefinition
 
         # Only clear toolset-type entries — never wipe skills or MCP
         for name in list(self._local_tools):

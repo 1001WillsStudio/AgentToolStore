@@ -11,9 +11,14 @@ Implements the agentskills.io open standard:
 
 from __future__ import annotations
 
+import base64
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+
+from toolstore.config_manager import _DOCKER_PERSISTENT_DIR
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +295,6 @@ class SkillDefinition:
                 files[str(rel_path)] = content
             except (UnicodeDecodeError, OSError):
                 # Binary files: read as base64
-                import base64
                 raw = abs_path.read_bytes()
                 files[str(rel_path)] = (
                     f"[base64]{base64.b64encode(raw).decode('ascii')}"
@@ -380,7 +384,6 @@ class SkillManager:
 
         Returns stdout of the script as a string, or an error message.
         """
-        import subprocess
         sd = self._skills.get(skill_name)
         if not sd:
             return f"Error: Skill '{skill_name}' not found"
@@ -436,7 +439,6 @@ class SkillManager:
 
         Returns the :class:`SkillDefinition` on success, ``None`` on failure.
         """
-        import shutil
 
         source = Path(source_path).resolve()
         if not source.is_dir():
@@ -450,7 +452,6 @@ class SkillManager:
         # Determine where to place the skill.
         # Docker persistent volume always wins (survives container restarts),
         # then explicit target, then configured skill dirs, then home fallback.
-        from toolstore.config_manager import _DOCKER_PERSISTENT_DIR
         if _DOCKER_PERSISTENT_DIR.parent.exists():
             target_base = _DOCKER_PERSISTENT_DIR / "skills"
         elif target_base_dir:

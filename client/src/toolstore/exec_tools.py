@@ -9,11 +9,20 @@ Routes execute calls to the appropriate backend:
 
 from __future__ import annotations
 
+import base64
+import importlib.util
 import json as _json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import Any, Dict
 
+from toolstore.mcp_client import get_client
 from toolstore.schema_converter import flatten_mcp_content
 from toolstore.skill_manager import get_skill_manager
+from toolstore.tool import Tool
+from toolstore.toolset import clear_registry, get_tool, get_tool_names
 
 
 def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
@@ -25,7 +34,6 @@ def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
     Uses the :class:`~toolstore.tool.Tool` class hierarchy for
     polymorphic dispatch — no more ``if tool_type == ...`` chains.
     """
-    from toolstore.tool import Tool
 
     try:
         t = Tool.from_dict(tool)
@@ -40,7 +48,6 @@ def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
 
 def _execute_mcp(tool: Dict[str, Any], args: Dict[str, Any],
                  config_manager) -> str:
-    from toolstore.mcp_client import get_client
 
     server_name = tool.get("mcp_server")
     if not server_name:
@@ -167,10 +174,6 @@ def _execute_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 def _execute_toolset_local(toolset_dir: str, function_name: str,
                            args: Dict[str, Any]) -> str:
     """Run a local toolset directly in-process — just import and call."""
-    import importlib.util
-    from pathlib import Path
-
-    from toolstore.toolset import clear_registry, get_tool
 
     code_path = Path(toolset_dir) / "toolset.py"
     if not code_path.exists():
@@ -191,7 +194,6 @@ def _execute_toolset_local(toolset_dir: str, function_name: str,
 
         fn = get_tool(function_name)
         if fn is None:
-            from toolstore.toolset import get_tool_names
             names = get_tool_names()
             return (
                 f"Error: Function '{function_name}' not found in toolset. "
@@ -214,11 +216,6 @@ def _execute_toolset_remote(tool: Dict[str, Any], function_name: str,
     Writes code to a temp directory, pip‑installs deps, then imports
     and calls the function just like _execute_toolset_local.
     """
-    import base64
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
 
     code = tool.get("code", "")
     code_b64 = tool.get("code_base64", "")

@@ -10,14 +10,23 @@ Supports three tool types:
 
 from __future__ import annotations
 
+import base64
+import importlib.util
 import json
+import logging
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
-from toolstore.index_manager import IndexManager
 from toolstore.config_manager import ConfigManager
-from toolstore.schema_converter import (
-    toolstore_to_openai,
-)
+from toolstore.exec_tools import execute_tool, _execute_mcp
+from toolstore.index_manager import IndexManager
+from toolstore.schema_converter import toolstore_to_openai, tool_fn_to_openai
+from toolstore.skill_manager import get_skill_manager
+from toolstore.tool import Tool, _read_doc
+from toolstore.toolset import clear_registry, get_tool_names as _gn, get_tool
 
 # ---------------------------------------------------------------------------
 # Global singletons
@@ -121,7 +130,6 @@ def _do_search(query: str) -> str:
     config_manager.load()
     skill_dirs = config_manager.get_skill_dirs()
     if skill_dirs:
-        from toolstore.skill_manager import get_skill_manager
         sm = get_skill_manager(skill_dirs)
         if not sm.list_skill_names():
             sm.scan()
@@ -214,7 +222,6 @@ def _do_info(tool_name: str) -> str:
     if tool_name.startswith("skill:"):
         config_manager.load()
         raw_name = tool_name[len("skill:"):]
-        from toolstore.skill_manager import get_skill_manager
         sm = get_skill_manager(config_manager.get_skill_dirs())
         if not sm.get_skill(raw_name):
             sm.scan()
@@ -415,7 +422,6 @@ _NATIVE_NAMES: set[str] = {
 
 def _primary_log():
     """Lazy logger for primary-tool warnings."""
-    import logging
     return logging.getLogger("toolstore.primary")
 
 
@@ -506,10 +512,6 @@ def _load_primary_toolset_schemas(
     ts_name: str, ts_dir: str, seen: set[str]
 ) -> list[dict]:
     """Load a primary toolset from disk and return OpenAI schemas."""
-    import importlib.util
-    from pathlib import Path
-    from toolstore.toolset import clear_registry, get_tool_names as _gn, get_tool
-    from toolstore.schema_converter import tool_fn_to_openai
 
     ts_file = Path(ts_dir) / "toolset.py"
     if not ts_file.exists():
@@ -572,8 +574,6 @@ def get_primary_tool_prompt() -> str:
 
     Returns an empty string when no primary tools are configured.
     """
-    from pathlib import Path
-    from toolstore.tool import _read_doc
 
     im = _get_im(); im._load_local()
     blocks: list[str] = []
@@ -703,7 +703,6 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
     if not tool and tool_name.startswith("skill:"):
         config_manager.load()
         raw_name = tool_name[len("skill:"):]
-        from toolstore.skill_manager import get_skill_manager
         sm = get_skill_manager(config_manager.get_skill_dirs())
         if not sm.get_skill(raw_name):
             sm.scan()
@@ -723,7 +722,6 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
     tool_type = tool.get("type", "unknown")
 
     # ── polymorphic dispatch via the Tool class hierarchy ────────────
-    from toolstore.tool import Tool
     try:
         t = Tool.from_dict(tool)
         return t.execute(**args)
@@ -735,7 +733,6 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
         return _execute_toolset_inline(tool, args)
     if tool_type == "mcp_toolset":
         return _execute_mcp_toolset(tool, args)
-    from toolstore.exec_tools import execute_tool
     return execute_tool(tool, args, config_manager, index_manager)
 
 
@@ -794,8 +791,6 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
 
 def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     """Execute an MCP tool resolved from toolset mode."""
-    from toolstore.exec_tools import _execute_mcp
-    from toolstore.index_manager import IndexManager
 
     function_name = args.get("function")
     if not function_name:
@@ -808,12 +803,6 @@ def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
 
 def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
     """Self-contained toolset execution — no external imports needed."""
-    import base64
-    import importlib, importlib.util
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
 
     args = dict(args)
     bindings = tool.get("bindings", {})

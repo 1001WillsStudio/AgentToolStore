@@ -5,7 +5,10 @@ OpenAI function-calling schemas, and MCP tool schemas (JSON Schema).
 
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional
+import json
+from typing import Callable, Dict, Any, List, Optional
+
+from toolstore.toolset import generate_definition
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +171,6 @@ def flatten_mcp_content(content_list: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-import json
-from typing import Callable
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +185,6 @@ def tool_fn_to_openai(fn: Callable) -> dict:
     "function": ...}`` envelope that the OpenAI API expects for conversation
     tool definitions.
     """
-    from toolstore.toolset import generate_definition
     inner = generate_definition(fn)
     return {
         "type": "function",

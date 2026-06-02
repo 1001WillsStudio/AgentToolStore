@@ -9,14 +9,21 @@ and execute itself.
 
 from __future__ import annotations
 
+import base64
+import importlib.util
 import json
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from toolstore.index_manager import IndexManager
+from toolstore.mcp_client import get_client
+from toolstore.schema_converter import toolstore_to_openai, flatten_mcp_content
+from toolstore.skill_manager import get_skill_manager
+
 if TYPE_CHECKING:
     from toolstore.config_manager import ConfigManager
-    from toolstore.index_manager import IndexManager
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +223,6 @@ class ToolsetTool(Tool):
         For the full set of function schemas from a toolset (one per
         binding), use :func:`_load_primary_toolset_schemas` instead.
         """
-        from toolstore.schema_converter import toolstore_to_openai
 
         return toolstore_to_openai({
             "name": self.name,
@@ -246,10 +252,6 @@ class ToolsetTool(Tool):
 
         Self‑contained — no circular import into :mod:`native_tool`.
         """
-        import base64
-        import importlib.util
-        import tempfile
-        from pathlib import Path
 
         kwargs = dict(kwargs)
         function_name = kwargs.pop("function", None)
@@ -372,7 +374,6 @@ class MCPTool(Tool):
         )
 
     def to_openai_schema(self) -> dict:
-        from toolstore.schema_converter import toolstore_to_openai
         return toolstore_to_openai({
             "name": self.name,
             "type": "mcp",
@@ -388,9 +389,6 @@ class MCPTool(Tool):
 
         Self‑contained — reads server config from IndexManager.
         """
-        from toolstore.mcp_client import get_client
-        from toolstore.schema_converter import flatten_mcp_content
-        from toolstore.index_manager import IndexManager
 
         function_name = kwargs.pop("function", self.name)
 
@@ -447,7 +445,6 @@ class SkillTool(Tool):
         )
 
     def to_openai_schema(self) -> dict:
-        from toolstore.schema_converter import toolstore_to_openai
         return toolstore_to_openai({
             "name": self.name,
             "type": "skill",
@@ -464,7 +461,6 @@ class SkillTool(Tool):
         Self‑contained — no circular import into :mod:`exec_tools`.
         """
         from toolstore.native_tool import config_manager
-        from toolstore.skill_manager import get_skill_manager
 
         skill_name = self.name
         if skill_name.startswith("skill:"):
