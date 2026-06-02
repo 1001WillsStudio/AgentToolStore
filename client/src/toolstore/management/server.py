@@ -669,43 +669,42 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json(result)
 
     def _patch_tool(self, name: str, body: dict):
-        """Patch a tool's exposure/enabled/etc.  Searches MCP servers, skills, and toolsets."""
-        cfg = api_mcp.load_config()
+        """Patch a tool's exposure/enabled/etc.
+
+        Uses a single :class:`IndexManager` instance for both lookup and
+        persistence so there is no possibility of a stale read/write race
+        between the temp IM and the :mod:`api_helpers` singleton.
+        """
         im = IndexManager(); im.load()
 
         target: dict | None = None
         target_key: str = ""
 
-        # 1. Search MCP servers' tools dicts
-        servers = cfg.get("mcp_servers", {})
-        if isinstance(servers, dict):
-            for sid, srv in servers.items():
-                if isinstance(srv, dict) and name in srv.get("tools", {}):
-                    target = srv["tools"]
-                    target_key = name
-                    break
+        # 1. MCP servers' tools
+        for sid, srv in im._local_mcp.items():
+            if isinstance(srv, dict) and name in srv.get("tools", {}):
+                target = srv["tools"]
+                target_key = name
+                break
 
-        # 2. Search skill cache
+        # 2. Skills
         if target is None:
             raw_name = name[len("skill:"):] if name.startswith("skill:") else name
-            skill_cache = cfg.get("skills", {})
-            if raw_name in skill_cache:
-                target = skill_cache
+            if raw_name in im._local_skills:
+                target = im._local_skills
                 target_key = raw_name
 
-        # 3. Search local toolsets
-        in_local = name in im._local_tools
-        if target is None and in_local:
+        # 3. Toolsets
+        if target is None and name in im._local_tools:
             target = im._local_tools
             target_key = name
 
-        # 4. Check MCP server-level (display_name or server_id)
+        # 4. MCP server-level patch (display_name or server_id)
         if target is None:
-            if isinstance(servers, dict):
-                for sid, srv in servers.items():
-                    if isinstance(srv, dict) and (srv.get("display_name") == name or sid == name):
-                        res, code = api_mcp.patch_mcp_server(sid, body)
-                        return self._json(res, code)
+            for sid, srv in im._local_mcp.items():
+                if isinstance(srv, dict) and (srv.get("display_name") == name or sid == name):
+                    res, code = api_mcp.patch_mcp_server(sid, body)
+                    return self._json(res, code)
             return self._json({"error": "Tool not found"}, 404)
 
         # Apply patch
@@ -713,11 +712,8 @@ class _Handler(SimpleHTTPRequestHandler):
             if k in body:
                 target[target_key][k] = body[k]
 
-        # Persist
-        if target is im._local_tools:
-            im._save_local()
-            cfg.setdefault("toolsets", {})[name] = im._local_tools[name]
-        api_mcp.save_config(cfg)
+        # Persist — one atomic save, no singleton interaction
+        im._save_local()
         self._json({"success": True, "tool": name})
 
     # ── helpers ───────────────────────────────────────────────────────
