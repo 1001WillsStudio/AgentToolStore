@@ -87,12 +87,14 @@ def add_mcp_server(body: dict) -> dict:
             for t in tools:
                 tn = t["name"]
                 srv_tools[tn] = {
+                    "name": tn,
                     "source": f"mcp:{sid}",
                     "enabled": True,
                     "exposure": tool_exposure,
                     "parallel_safe": False,
                     "subagent_safe": False,
                     "description": t.get("description", ""),
+                    "inputSchema": t.get("parameters", {}),
                 }
             save_config(cfg)
         except Exception as exc:
@@ -122,12 +124,14 @@ def connect_mcp_server(sid: str) -> dict:
         tn = t["name"]
         if tn not in srv_tools:
             srv_tools[tn] = {
+                "name": tn,
                 "source": f"mcp:{sid}",
                 "enabled": True,
                 "exposure": tool_exposure,
                 "parallel_safe": False,
                 "subagent_safe": False,
                 "description": t.get("description", ""),
+                "inputSchema": t.get("parameters", {}),
             }
     save_config(cfg)
     return {"success": True, "tools": tools}, 200

@@ -419,6 +419,9 @@ _NATIVE_NAMES: set[str] = {
     "subagent", "continue_as_new_chat",
 }
 
+# ── Re‑import mcp_to_openai for use in get_primary_tool_schemas ──
+from toolstore.schema_converter import mcp_to_openai
+
 
 def _primary_log():
     """Lazy logger for primary-tool warnings."""
@@ -449,6 +452,17 @@ def get_primary_tool_names() -> list[str]:
         if isinstance(t_info, dict) and t_info.get("exposure") == "primary":
             names.append(t_name)
 
+    # ── MCP servers in toolset mode with primary exposure ─────────
+    for sid, srv in im._local_mcp.items():
+        if not isinstance(srv, dict):
+            continue
+        if srv.get("mode", "toolset") != "toolset":
+            continue
+        if srv.get("exposure") != "primary":
+            continue
+        for tn in srv.get("tools", {}):
+            names.append(tn)
+
     return sorted(set(names))
 
 
@@ -459,6 +473,10 @@ def get_primary_tool_schemas() -> list[dict]:
     and each ``@tool`` callable is converted to an OpenAI schema via
     :func:`tool_fn_to_openai`.  For individual primary tools the index
     definition is converted via :func:`toolstore_to_openai`.
+
+    MCP servers in toolset mode with primary exposure have all of their
+    tools converted to OpenAI schemas using the cached MCP tool definitions
+    (which already contain ``inputSchema``).
 
     Tools whose names collide with native AuroraCoder tools are skipped
     with a warning.
@@ -487,7 +505,7 @@ def get_primary_tool_schemas() -> list[dict]:
                     "Failed to load primary toolset '%s': %s", ts_name, exc
                 )
 
-    # ── 2. Primary individual tools (MCP, skills) ──────────────────────
+    # ── 2. Primary individual tools (MCP tools mode, skills) ───────────
     for t_name, t_info in _iter_individual_tools():
         if not isinstance(t_info, dict):
             continue
@@ -495,13 +513,31 @@ def get_primary_tool_schemas() -> list[dict]:
             continue
         if t_name in _NATIVE_NAMES or t_name in seen:
             continue
-        index_manager.load()
-        tool_def = index_manager.get_tool(t_name)
-        if tool_def:
+        try:
+            # MCP tools already carry inputSchema — convert directly
+            schema = mcp_to_openai(t_info)
+            schemas.append(schema)
+            seen.add(t_name)
+        except Exception:
+            pass
+
+    # ── 3. MCP servers in toolset mode with primary exposure ───────────
+    for sid, srv in im._local_mcp.items():
+        if not isinstance(srv, dict):
+            continue
+        if srv.get("mode", "toolset") != "toolset":
+            continue
+        if srv.get("exposure") != "primary":
+            continue
+        for tn, ti in srv.get("tools", {}).items():
+            if not isinstance(ti, dict):
+                continue
+            if tn in _NATIVE_NAMES or tn in seen:
+                continue
             try:
-                schema = toolstore_to_openai(tool_def)
+                schema = mcp_to_openai(ti)
                 schemas.append(schema)
-                seen.add(t_name)
+                seen.add(tn)
             except Exception:
                 pass
 
@@ -609,6 +645,24 @@ def get_primary_tool_prompt() -> str:
             parts.extend(f"- {fn}" for fn in fn_names)
             blocks.append("\n".join(parts))
 
+    # ── MCP servers in toolset mode with primary exposure ─────────
+    for sid, srv in im._local_mcp.items():
+        if not isinstance(srv, dict):
+            continue
+        if srv.get("mode", "toolset") != "toolset":
+            continue
+        if srv.get("exposure") != "primary":
+            continue
+        display = srv.get("display_name") or sid
+        desc = srv.get("description", "")
+        parts = [f"### {display}"]
+        if desc:
+            parts.append(desc)
+        for tn in sorted(srv.get("tools", {})):
+            if tn not in _NATIVE_NAMES:
+                parts.append(f"- {tn}")
+        blocks.append("\n".join(parts))
+
     # ── Individual primary tools (MCP, skills) ──────────────────────
     for t_name, t_info in _iter_individual_tools():
         if not isinstance(t_info, dict):
@@ -651,8 +705,9 @@ def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
 def execute_tool_direct(name: str, kwargs: dict) -> str:
     """Execute a primary tool by function name — no ``tool_store`` dispatch.
 
-    Looks up the function in primary toolsets' bindings; falls back to the
-    standard ``_do_execute`` path for individual tools (MCP, skills).
+    Looks up the function in primary toolsets' bindings; then in MCP primary
+    tools (both individual tools mode and toolset‑mode MCP servers); falls
+    back to the standard ``_do_execute`` path for skills and other types.
 
     The LLM calls primary tools directly (e.g. ``calculator("1+2")``) —
     this is the entry point that routes those calls to the right backend.
@@ -675,8 +730,58 @@ def execute_tool_direct(name: str, kwargs: dict) -> str:
             kwargs["function"] = name
         return _execute_toolset_inline(tool, kwargs)
 
-    # 2. Individual primary tools (MCP, skills) — standard dispatch
+    # 2. MCP primary tool (individual or from toolset-mode primary server)
+    mcp_tool = _find_primary_mcp_tool(name)
+    if mcp_tool is not None:
+        return _execute_mcp(mcp_tool, kwargs, config_manager)
+
+    # 3. Individual primary tools (skills, etc.) — standard dispatch
     return _do_execute(name, kwargs)
+
+
+def _find_primary_mcp_tool(name: str) -> Optional[Dict[str, Any]]:
+    """Find an MCP tool that is primary‑exposed by ``name``.
+
+    Searches all MCP servers in :attr:`IndexManager._local_mcp` for a tool
+    whose exposure is ``"primary"``.  Two scenarios are checked:
+
+    1. **Toolset‑mode** MCP server: the server itself is set to primary —
+       all of its individual tools are considered primary.
+    2. **Tools‑mode** MCP server: individual tools are set to primary.
+
+    Returns a minimal tool dict (with ``mcp_server``) that
+    :func:`_execute_mcp` can consume, or ``None``.
+    """
+    im = _get_im(); im._load_local()
+    servers = im._local_mcp
+    if not isinstance(servers, dict):
+        return None
+
+    for sid, srv in servers.items():
+        if not isinstance(srv, dict):
+            continue
+        srv_tools = srv.get("tools", {})
+        ti = srv_tools.get(name)
+        if not isinstance(ti, dict):
+            continue
+
+        is_toolset_mode = srv.get("mode", "toolset") == "toolset"
+        if is_toolset_mode:
+            if srv.get("exposure") == "primary":
+                return {
+                    "name": name,
+                    "type": "mcp",
+                    "mcp_server": ti.get("mcp_server") or sid,
+                }
+        else:
+            if ti.get("exposure") == "primary":
+                return {
+                    "name": name,
+                    "type": "mcp",
+                    "mcp_server": ti.get("mcp_server") or sid,
+                }
+
+    return None
 
 
 def prefetch_primary_tools() -> int:

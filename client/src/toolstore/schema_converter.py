@@ -61,16 +61,24 @@ def toolstore_to_openai(tool_def: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def mcp_to_openai(mcp_tool: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert an MCP tool definition (from tools/list) to OpenAI schema."""
+    """Convert an MCP tool definition (from tools/list) to OpenAI schema.
+
+    Accepts either ``inputSchema`` (native MCP) or ``parameters``
+    (as stored by ``connect_and_discover`` / the management API).
+    """
+    # The management API stores schema under "parameters", while raw
+    # MCP tools/list responses use "inputSchema".  Try both.
+    input_schema = (
+        mcp_tool.get("inputSchema")
+        or mcp_tool.get("parameters")
+        or {"type": "object", "properties": {}}
+    )
     return {
         "type": "function",
         "function": {
             "name": mcp_tool["name"],
             "description": mcp_tool.get("description", ""),
-            "parameters": mcp_tool.get("inputSchema", {
-                "type": "object",
-                "properties": {},
-            }),
+            "parameters": input_schema,
         },
     }
 
