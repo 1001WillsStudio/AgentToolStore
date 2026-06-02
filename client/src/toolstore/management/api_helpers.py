@@ -25,10 +25,33 @@ _CLI_MCP_KEY = "mcpServers"
 
 _DEFAULT_CFG: dict[str, Any] = {
     "mcp_servers": {},
-    "tools": {},
-    "skills": {},
+    "skill_cache": {},
     "toolsets": {},
 }
+
+
+def _migrate_tools(cfg: dict[str, Any]) -> None:
+    """One‑shot: move legacy ``cfg["tools"]`` entries to their correct homes.
+
+    * MCP tools (``source`` starts with ``mcp:``) → ``cfg["mcpServers"][sid]["tools"]``
+    * Skills (``source`` starts with ``skill:``) → ``cfg["skill_cache"]``
+
+    Idempotent — after migration ``cfg["tools"]`` is deleted.
+    """
+    if "tools" not in cfg:
+        return
+    tools = cfg.pop("tools")
+    for name, info in tools.items():
+        if not isinstance(info, dict):
+            continue
+        source = info.get("source", "")
+        if source.startswith("mcp:"):
+            sid = source[4:]
+            srv = cfg.setdefault("mcpServers", {}).setdefault(sid, {})
+            srv.setdefault("tools", {})[name] = info
+        elif source.startswith("skill:"):
+            skill_name = name[len("skill:"):] if name.startswith("skill:") else name
+            cfg.setdefault("skill_cache", {})[skill_name] = info
 
 
 def _config_manager() -> ConfigManager:
@@ -43,9 +66,22 @@ def load_config() -> dict:
     cli_servers = cm.config.get(_CLI_MCP_KEY, {})
     if cli_servers:
         cfg[_SPA_MCP_KEY] = dict(cli_servers)
-    for k in ("tools", "skills", "toolsets"):
+    for k in ("skill_cache", "toolsets"):
         if k in cm.config:
             cfg[k] = cm.config[k]
+    # Legacy migration: move cfg["tools"] → cfg["mcpServers"][sid]["tools"] / cfg["skill_cache"]
+    if "tools" in cm.config:
+        cfg_tmp = dict(cfg)
+        cfg_tmp["tools"] = cm.config["tools"]
+        _migrate_tools(cfg_tmp)
+        # Merge migrated entries back into cfg
+        for sid, srv in cfg_tmp.get("mcpServers", {}).items():
+            if sid not in cfg["mcp_servers"]:
+                cfg["mcp_servers"][sid] = srv
+            else:
+                cfg["mcp_servers"][sid].setdefault("tools", {}).update(srv.get("tools", {}))
+        for sn, si in cfg_tmp.get("skill_cache", {}).items():
+            cfg["skill_cache"][sn] = si
     return cfg
 
 
@@ -54,9 +90,10 @@ def save_config(cfg: dict) -> None:
     spa_servers = cfg.get(_SPA_MCP_KEY, {})
     if spa_servers:
         cm.config[_CLI_MCP_KEY] = dict(spa_servers)
-    cm.config["tools"] = cfg.get("tools", {})
-    cm.config["skills"] = cfg.get("skills", {})
+    cm.config["skill_cache"] = cfg.get("skill_cache", {})
     cm.config["toolsets"] = cfg.get("toolsets", {})
+    # Purge legacy key so it doesn't stick around
+    cm.config.pop("tools", None)
     cm.save()
 
 
@@ -163,6 +200,4 @@ def disconnect_all_clients() -> None:
 
 
 def count_mcp_tools(cfg: dict, server_id: str) -> int:
-    prefix = f"mcp:{server_id}"
-    return sum(1 for v in cfg.get("tools", {}).values()
-               if v.get("source") == prefix)
+    return len(cfg.get("mcp_servers", {}).get(server_id, {}).get("tools", {}))

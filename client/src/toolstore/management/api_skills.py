@@ -66,8 +66,7 @@ def register_skill(body: dict) -> tuple[dict, int]:
         cm.add_skill_dir(str(d))
 
     cfg = load_config()
-    cfg.setdefault("tools", {})
-    cfg["tools"][f"skill:{installed.name}"] = {
+    cfg.setdefault("skill_cache", {})[installed.name] = {
         "source": f"skill:{installed.name}",
         "enabled": True,
         "exposure": "secondary",
@@ -116,9 +115,8 @@ def register_skill_folder(body: dict) -> tuple[dict, int]:
         cm.add_skill_dir(str(d))
 
     cfg = load_config()
-    cfg.setdefault("tools", {})
     for name in registered:
-        cfg["tools"][f"skill:{name}"] = {
+        cfg.setdefault("skill_cache", {})[name] = {
             "source": f"skill:{name}", "enabled": True,
             "exposure": "secondary", "parallel_safe": False,
             "subagent_safe": False, "description": "",
@@ -174,9 +172,8 @@ def upload_skill(body: dict) -> tuple[dict, int]:
             cm.add_skill_dir(str(d))
 
         cfg2 = load_config()
-        cfg2.setdefault("tools", {})
         for name in registered:
-            cfg2["tools"][f"skill:{name}"] = {
+            cfg2.setdefault("skill_cache", {})[name] = {
                 "source": f"skill:{name}", "enabled": True,
                 "exposure": "secondary", "parallel_safe": False,
                 "subagent_safe": False, "description": "",
@@ -210,8 +207,6 @@ def remove_skill(name: str) -> tuple[dict, int]:
     sm._skills.pop(name, None)
 
     cfg = load_config()
-    prefix = f"skill:{name}"
-    cfg["tools"] = {k: v for k, v in cfg.get("tools", {}).items()
-                    if v.get("source") != prefix}
+    cfg.get("skill_cache", {}).pop(name, None)
     save_config(cfg)
     return {"success": True}, 200

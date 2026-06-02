@@ -155,23 +155,22 @@ def _do_info(tool_name: str) -> str:
     servers = config_manager.config.get("mcpServers", {})
 
     # Try exact server_id match first
-    prefix = f"mcp:{tool_name}"
     mcp_tools: dict[str, dict] = {}
-    for tname, tinfo in config_manager.config.get("tools", {}).items():
-        if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
-            mcp_tools[tname] = tinfo
+    _mcp_servers = config_manager.config.get("mcpServers", {})
+    if isinstance(_mcp_servers, dict) and tool_name in _mcp_servers:
+        for _tn, _ti in _mcp_servers[tool_name].get("tools", {}).items():
+            if isinstance(_ti, dict):
+                mcp_tools[_tn] = _ti
 
     # Try display_name match
-    if not mcp_tools and isinstance(servers, dict):
-        for sid, srv in servers.items():
-            if isinstance(srv, dict) and srv.get("display_name") == tool_name:
-                prefix = f"mcp:{sid}"
-                for tname, tinfo in config_manager.config.get("tools", {}).items():
-                    if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
-                        mcp_tools[tname] = tinfo
+    if not mcp_tools and isinstance(_mcp_servers, dict):
+        for _sid, _srv in _mcp_servers.items():
+            if isinstance(_srv, dict) and _srv.get("display_name") == tool_name:
+                for _tn, _ti in _srv.get("tools", {}).items():
+                    if isinstance(_ti, dict):
+                        mcp_tools[_tn] = _ti
                 if mcp_tools:
-                    # Use the matched server_id for the response
-                    srv_info = srv
+                    srv_info = _srv
                     break
 
     if mcp_tools:
@@ -262,13 +261,16 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
     lines = [header]
 
     # ── MCP servers (grouped toolsets) ──────────────────────────────
+    mcp_tools_by_server: dict[str, list[str]] = {}
     config_manager.load()
-    mcp_tools_by_server: dict[str, list] = {}
-    for tname, tinfo in config_manager.config.get("tools", {}).items():
-        source = tinfo.get("source", "") if isinstance(tinfo, dict) else ""
-        if source.startswith("mcp:"):
-            server = source[4:]
-            mcp_tools_by_server.setdefault(server, []).append(tname)
+    _mcp_servers2 = config_manager.config.get("mcpServers", {})
+    if isinstance(_mcp_servers2, dict):
+        for _sid, _srv in _mcp_servers2.items():
+            if not isinstance(_srv, dict):
+                continue
+            for _tn, _ti in _srv.get("tools", {}).items():
+                if isinstance(_ti, dict):
+                    mcp_tools_by_server.setdefault(_sid, []).append(_tn)
 
     # Build display-name lookup for MCP servers
     servers = config_manager.config.get("mcpServers", {})
@@ -328,30 +330,28 @@ def get_secondary_tool_names() -> list[str]:
             if isinstance(info, dict) and info.get("exposure") == "secondary":
                 names.append(name)
 
-    tools = config_manager.config.get("tools", {})
+    # MCP tools → group by server (toolset mode) or list individually
     servers = config_manager.config.get("mcpServers", {})
-    if isinstance(tools, dict):
-        for name, info in tools.items():
-            if not isinstance(info, dict):
+    if isinstance(servers, dict):
+        for sid, srv in servers.items():
+            if not isinstance(srv, dict):
                 continue
-            if info.get("exposure") != "secondary":
-                continue
-            source = info.get("source", "")
-            if source.startswith("mcp:"):
-                server_id = source[4:]
-                mcp_srv = servers.get(server_id, {}) if isinstance(servers, dict) else {}
-                if isinstance(mcp_srv, dict) and mcp_srv.get("mode", "toolset") == "individual":
-                    # Individual mode: each tool appears as its own entry
-                    names.append(name)
-                elif isinstance(mcp_srv, dict):
-                    # Toolset mode: group by server display_name
-                    display = mcp_srv.get("display_name") or server_id
-                    if mcp_srv.get("exposure", "secondary") == "secondary":
-                        mcp_servers[display] = server_id
-                else:
-                    mcp_servers[server_id] = server_id
+            srv_tools = srv.get("tools", {})
+            if srv.get("mode", "toolset") == "toolset":
+                if srv.get("exposure", "secondary") == "secondary":
+                    display = srv.get("display_name") or sid
+                    mcp_servers[display] = sid
             else:
-                names.append(name)  # skill:xxx, etc.
+                for tn, ti in srv_tools.items():
+                    if isinstance(ti, dict) and ti.get("exposure") == "secondary":
+                        names.append(tn)
+
+    # Skills
+    skill_cache = config_manager.config.get("skill_cache", {})
+    if isinstance(skill_cache, dict):
+        for sn, si in skill_cache.items():
+            if isinstance(si, dict) and si.get("exposure") == "secondary":
+                names.append(f"skill:{sn}")
 
     # ── Also include MCP servers whose server-level exposure is secondary,
     # even if their individual tools are hidden (the agent can discover
@@ -373,6 +373,31 @@ def get_secondary_tool_names() -> list[str]:
     names.extend(sorted(mcp_servers.keys()))
 
     return names
+
+
+
+
+def _iter_individual_tools(cfg: Dict[str, Any]):
+    """Iterate ``(name, info)`` for all individual MCP tools and skills.
+
+    MCP tools live under ``cfg["mcpServers"][sid]["tools"]``;
+    skills live under ``cfg["skill_cache"]``.
+    """
+    # MCP tools
+    servers = cfg.get("mcpServers", {})
+    if isinstance(servers, dict):
+        for sid, srv in servers.items():
+            if not isinstance(srv, dict):
+                continue
+            for tn, ti in srv.get("tools", {}).items():
+                if isinstance(ti, dict):
+                    yield tn, ti
+    # Skills
+    skills = cfg.get("skill_cache", {})
+    if isinstance(skills, dict):
+        for sn, si in skills.items():
+            if isinstance(si, dict):
+                yield f"skill:{sn}", si
 
 
 # ---------------------------------------------------------------------------
@@ -416,11 +441,9 @@ def get_primary_tool_names() -> list[str]:
             bindings = info.get("bindings", {})
             names.extend(bindings.keys())
 
-    tools = config_manager.config.get("tools", {})
-    if isinstance(tools, dict):
-        for t_name, t_info in tools.items():
-            if isinstance(t_info, dict) and t_info.get("exposure") == "primary":
-                names.append(t_name)
+    for t_name, t_info in _iter_individual_tools(config_manager.config):
+        if isinstance(t_info, dict) and t_info.get("exposure") == "primary":
+            names.append(t_name)
 
     return sorted(set(names))
 
@@ -461,24 +484,22 @@ def get_primary_tool_schemas() -> list[dict]:
                 )
 
     # ── 2. Primary individual tools (MCP, skills) ──────────────────────
-    tools = config_manager.config.get("tools", {})
-    if isinstance(tools, dict):
-        for t_name, t_info in tools.items():
-            if not isinstance(t_info, dict):
-                continue
-            if t_info.get("exposure") != "primary":
-                continue
-            if t_name in _NATIVE_NAMES or t_name in seen:
-                continue
-            index_manager.load()
-            tool_def = index_manager.get_tool(t_name)
-            if tool_def:
-                try:
-                    schema = toolstore_to_openai(tool_def)
-                    schemas.append(schema)
-                    seen.add(t_name)
-                except Exception:
-                    pass
+    for t_name, t_info in _iter_individual_tools(config_manager.config):
+        if not isinstance(t_info, dict):
+            continue
+        if t_info.get("exposure") != "primary":
+            continue
+        if t_name in _NATIVE_NAMES or t_name in seen:
+            continue
+        index_manager.load()
+        tool_def = index_manager.get_tool(t_name)
+        if tool_def:
+            try:
+                schema = toolstore_to_openai(tool_def)
+                schemas.append(schema)
+                seen.add(t_name)
+            except Exception:
+                pass
 
     return schemas
 
@@ -591,23 +612,18 @@ def get_primary_tool_prompt() -> str:
             blocks.append("\n".join(parts))
 
     # ── Individual primary tools (MCP, skills) ──────────────────────
-    tools = config_manager.config.get("tools", {})
-    if isinstance(tools, dict):
-        for t_name, t_info in tools.items():
-            if not isinstance(t_info, dict):
-                continue
-            if t_info.get("exposure") != "primary":
-                continue
-            if t_name in _NATIVE_NAMES:
-                continue
-            if isinstance(tinfo, dict):
-                desc = t_info.get("description", "")
-            else:
-                desc = ""
-            if desc:
-                blocks.append(f"- {t_name} — {desc}")
-            else:
-                blocks.append(f"- {t_name}")
+    for t_name, t_info in _iter_individual_tools(config_manager.config):
+        if not isinstance(t_info, dict):
+            continue
+        if t_info.get("exposure") != "primary":
+            continue
+        if t_name in _NATIVE_NAMES:
+            continue
+        desc = t_info.get("description", "")
+        if desc:
+            blocks.append(f"- {t_name} — {desc}")
+        else:
+            blocks.append(f"- {t_name}")
 
     if not blocks:
         return ""
@@ -743,20 +759,15 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
 
     # Build server-id → (display_name, tools) lookup
     server_map: Dict[str, tuple] = {}
-    tools = config_manager.config.get("tools", {})
 
     for sid, srv in servers.items():
         if not isinstance(srv, dict):
             continue
         display = srv.get("display_name") or sid
-        prefix = f"mcp:{sid}"
-        server_tools: Dict[str, dict] = {}
-        for tname, tinfo in tools.items():
-            if isinstance(tinfo, dict) and tinfo.get("source") == prefix:
-                server_tools[tname] = tinfo
+        server_tools: Dict[str, dict] = srv.get("tools", {})
         if server_tools:
             server_map[sid] = (display, server_tools)
-            server_map[display] = (display, server_tools)  # also key by display_name
+            server_map[display] = (display, server_tools)
 
     if tool_name not in server_map:
         return None

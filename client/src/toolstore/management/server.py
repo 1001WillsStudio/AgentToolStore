@@ -238,9 +238,9 @@ class _Handler(SimpleHTTPRequestHandler):
             for ds in result.invalid_skills:
                 failed.append({"name": ds.name or str(ds.rel_path), "error": "; ".join(ds.errors)})
             for d in sm.skill_dirs: cm.add_skill_dir(str(d))
-            cfg = api_mcp.load_config(); cfg.setdefault("tools", {})
+            cfg = api_mcp.load_config(); cfg.setdefault("skill_cache", {})
             for name in registered:
-                cfg["tools"][f"skill:{name}"] = {
+                cfg["skill_cache"][name] = {
                     "source": f"skill:{name}", "enabled": True,
                     "exposure": "secondary", "parallel_safe": False,
                     "subagent_safe": False, "description": ""}
@@ -269,13 +269,11 @@ class _Handler(SimpleHTTPRequestHandler):
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-toolset-"))
         try:
             with zipfile.ZipFile(BytesIO(zip_data)) as zf: zf.extractall(tmp)
-            # Find toolset dirs: any dir (including root) with a .md file
             toolset_dirs = []
             for root, dirs, _files in os.walk(tmp):
                 for d in dirs:
                     if list((Path(root) / d).glob("*.md")):
                         toolset_dirs.append(Path(root) / d)
-            # The zip may place files directly at root (no wrapper folder)
             if list(tmp.glob("*.md")):
                 toolset_dirs.append(tmp)
 
@@ -293,7 +291,6 @@ class _Handler(SimpleHTTPRequestHandler):
                 if not td.load():
                     failed.append({"name": ts_dir.name, "error": "; ".join(td.errors)})
                     continue
-                # Derive name from doc heading or fall back to dir name
                 name = td.name
                 if td.doc and td.doc.startswith("#"):
                     name = td.doc.split("\n")[0].lstrip("#").strip()
@@ -312,7 +309,6 @@ class _Handler(SimpleHTTPRequestHandler):
                 registered.append(name)
 
             im._save_local()
-            # Mirror to settings.json so primary-tool functions see them
             cfg_up = api_mcp.load_config()
             for name in registered:
                 cfg_up.setdefault("toolsets", {})[name] = im._local_tools[name]
@@ -326,7 +322,6 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: toolsets + registry toolsets ─────────────────────────────
 
     def _list_toolsets(self):
-        """Return local toolsets from local_registry.json — the single source of truth."""
         im = IndexManager()
         im.load()
         result = {}
@@ -348,14 +343,11 @@ class _Handler(SimpleHTTPRequestHandler):
         td = ToolsetDefinition(ts_path)
         if not td.load(): return self._json({"error": "Toolset validation failed", "details": td.errors}, 400)
         cm = ConfigManager(); cm.load()
-        # Copy into the persistent Docker dir if we're running in Docker,
-        # otherwise just add the parent directory to the search path.
         persistent_root = cm.config_dir / "toolsets"
         persistent_root.mkdir(parents=True, exist_ok=True)
         dest = persistent_root / td.name
         if not dest.exists():
             shutil.copytree(ts_path, dest)
-        # Register in the local registry (single source of truth)
         im = IndexManager()
         im.load()
         im._local_tools[td.name] = {
@@ -368,7 +360,6 @@ class _Handler(SimpleHTTPRequestHandler):
             "bindings": td.functions,
         }
         im._save_local()
-        # Mirror to settings.json so primary-tool functions see it
         cfg = api_mcp.load_config()
         cfg.setdefault("toolsets", {})[td.name] = im._local_tools[td.name]
         api_mcp.save_config(cfg)
@@ -399,7 +390,6 @@ class _Handler(SimpleHTTPRequestHandler):
             }
             registered.append(td.name)
         im._save_local()
-        # Mirror to settings.json so primary-tool functions see it
         cfg = api_mcp.load_config()
         for name in registered:
             cfg.setdefault("toolsets", {})[name] = im._local_tools[name]
@@ -407,40 +397,32 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json({"success": True, "registered": registered, "count": count})
 
     def _remove_toolset(self, name: str):
-        """Remove a local toolset — single source of truth: local_registry.json."""
-
         im = IndexManager()
         im.load()
         if name not in im._local_tools:
             return self._json({"error": "Toolset not found"}, 404)
 
         entry = im._local_tools[name]
-        # Delete the directory on disk
         ts_dir = entry.get("toolset_dir")
         if ts_dir:
             shutil.rmtree(ts_dir, ignore_errors=True)
-        # Remove from the only source of truth
         del im._local_tools[name]
         im._save_local()
-        # Also remove from settings.json
         cfg_rm = api_mcp.load_config()
         cfg_rm.get("toolsets", {}).pop(name, None)
         api_mcp.save_config(cfg_rm)
         self._json({"success": True})
 
     def _list_registry_toolsets(self):
-        """Return online toolsets from the registry index."""
         cm = _config_manager()
         ip = _config_manager().config_dir / "online_registry.json"
 
-        # Refresh: delete cache so we re‑fetch from registry
         q = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(q)
         if params.get("refresh", [""])[0] == "true":
             if ip.exists():
                 ip.unlink()
 
-        # Fetch from registry if no local cache
         if not ip.exists():
             try:
                 registry_url = cm.get_registry_url()
@@ -460,7 +442,6 @@ class _Handler(SimpleHTTPRequestHandler):
         local_names = set(im._local_tools.keys())
         result = {}
 
-        # Flat‑list format (ToolStore registry: [{name, description, ...}])
         if isinstance(data, list):
             for tdef in data:
                 if not isinstance(tdef, dict):
@@ -478,7 +459,6 @@ class _Handler(SimpleHTTPRequestHandler):
                     "source": tdef.get("source", "public"),
                     "category": tdef.get("category", ""),
                     "exposure": "hidden"}
-        # Legacy dict‑in‑dict format
         elif isinstance(data, dict):
             for name, tdef in data.get("tools", {}).items():
                 if not isinstance(tdef, dict):
@@ -505,7 +485,6 @@ class _Handler(SimpleHTTPRequestHandler):
         if not ip.exists(): return self._json({"error": "Registry index not found"}, 404)
         try: data = json.loads(ip.read_text())
         except Exception: return self._json({"error": "Failed to read registry index"}, 500)
-        # Handle both flat‑list and legacy dict format
         if isinstance(data, list):
             tdef = next((t for t in data if isinstance(t, dict) and t.get("name") == name), None)
         else:
@@ -513,10 +492,8 @@ class _Handler(SimpleHTTPRequestHandler):
         if not tdef or tdef.get("type") != "toolset":
             return self._json({"error": f"Toolset '{name}' not found in registry"}, 404)
         root = cm.config_dir / "toolsets"; (root / name).mkdir(parents=True, exist_ok=True)
-        # Write doc.md (required)
         doc = tdef.get("doc", "") or tdef.get("description", "")
         (root / name / "doc.md").write_text(doc, encoding="utf-8")
-        # Write toolset.py (optional)
         code = tdef.get("code", "")
         if not code and tdef.get("code_base64"):
             code = base64.b64decode(tdef["code_base64"]).decode("utf-8")
@@ -534,7 +511,6 @@ class _Handler(SimpleHTTPRequestHandler):
             "bindings": tdef.get("bindings", {}),
         }
         im._save_local()
-        # Mirror to settings.json so primary-tool functions see it
         cfg_set = api_mcp.load_config()
         cfg_set.setdefault("toolsets", {})[name] = im._local_tools[name]
         api_mcp.save_config(cfg_set)
@@ -586,8 +562,9 @@ class _Handler(SimpleHTTPRequestHandler):
         if srv.get("auto_connect", True):
             try:
                 tools = api_mcp.connect_and_discover(server_label, srv)
+                srv_tools = cfg.setdefault("mcp_servers", {}).setdefault(server_label, {}).setdefault("tools", {})
                 for t in tools:
-                    cfg["tools"][t["name"]] = {
+                    srv_tools[t["name"]] = {
                         "source": f"mcp:{server_label}", "enabled": True,
                         "exposure": body.get("exposure_default", "secondary"),
                         "parallel_safe": False, "subagent_safe": False,
@@ -601,21 +578,19 @@ class _Handler(SimpleHTTPRequestHandler):
     # ── API: tools list / patch ───────────────────────────────────────
 
     def _list_tools(self):
+        """List all tools from the 3‑type hierarchy (MCP servers, skills, toolsets)."""
         cfg = api_mcp.load_config()
-        servers = cfg.get("mcpServers", {})
+        servers = cfg.get("mcp_servers", {})
         result = {"mcp": {}, "mcp_toolsets": {}, "registry": {}, "toolsets": {}, "skills": {}}
 
-        # ── MCP toolset entries (toolset-mode servers grouped as one card) ──
         if isinstance(servers, dict):
             for sid, srv in servers.items():
-                if srv.get("mode", "toolset") != "toolset":
+                if not isinstance(srv, dict):
                     continue
-                prefix = f"mcp:{sid}"
-                fn_names = []
-                for tn, ti in cfg.get("tools", {}).items():
-                    if isinstance(ti, dict) and ti.get("source") == prefix:
-                        fn_names.append(tn)
-                if fn_names:
+                srv_tools = srv.get("tools", {})
+                if not isinstance(srv_tools, dict) or not srv_tools:
+                    continue
+                if srv.get("mode", "toolset") == "toolset":
                     display = srv.get("display_name") or sid
                     result["mcp_toolsets"][display] = {
                         "source": f"mcp:{sid}",
@@ -624,38 +599,39 @@ class _Handler(SimpleHTTPRequestHandler):
                         "exposure": srv.get("exposure", "secondary"),
                         "parallel_safe": False,
                         "subagent_safe": False,
-                        "description": srv.get("description", "") or f"MCP server with {len(fn_names)} tool{'s' if len(fn_names) != 1 else ''}",
-                        "functions": fn_names,
+                        "description": srv.get("description", "") or f"MCP server with {len(srv_tools)} tool{'s' if len(srv_tools) != 1 else ''}",
+                        "functions": list(srv_tools.keys()),
                     }
+                else:
+                    for tn, ti in srv_tools.items():
+                        if not isinstance(ti, dict):
+                            continue
+                        result["mcp"][tn] = {
+                            "source": f"mcp:{sid}", "enabled": ti.get("enabled", True),
+                            "exposure": ti.get("exposure", "secondary"),
+                            "parallel_safe": ti.get("parallel_safe", False),
+                            "subagent_safe": ti.get("subagent_safe", False),
+                            "description": ti.get("description", "")}
 
-        # ── Individual tools ──
-        for tn, ti in cfg.get("tools", {}).items():
-            src = ti.get("source", "")
-            if src.startswith("mcp:"):
-                sid = src[4:]
-                srv = servers.get(sid, {}) if isinstance(servers, dict) else {}
-                # Skip tools from toolset-mode servers (they're in mcp_toolsets)
-                if srv.get("mode", "toolset") == "toolset":
+        # Skills (from cfg["skill_cache"])
+        skill_cache = cfg.get("skill_cache", {})
+        if isinstance(skill_cache, dict):
+            for sn, si in skill_cache.items():
+                if not isinstance(si, dict):
                     continue
-                result["mcp"][tn] = {
-                    "source": src, "enabled": ti.get("enabled", True),
-                    "exposure": ti.get("exposure", "secondary"),
-                    "parallel_safe": ti.get("parallel_safe", False),
-                    "subagent_safe": ti.get("subagent_safe", False),
-                    "description": ti.get("description", "")}
-            elif src.startswith("skill:"):
-                result["skills"][tn] = {
-                    "source": src, "enabled": ti.get("enabled", True),
-                    "exposure": ti.get("exposure", "secondary"),
-                    "parallel_safe": ti.get("parallel_safe", False),
-                    "subagent_safe": ti.get("subagent_safe", False),
-                    "description": ti.get("description", "")}
+                result["skills"][f"skill:{sn}"] = {
+                    "source": f"skill:{sn}", "enabled": si.get("enabled", True),
+                    "exposure": si.get("exposure", "secondary"),
+                    "parallel_safe": si.get("parallel_safe", False),
+                    "subagent_safe": si.get("subagent_safe", False),
+                    "description": si.get("description", "")}
+
+        # Registry toolsets (online_registry.json — unchanged)
         cm = _config_manager()
         ip = _config_manager().config_dir / "online_registry.json"
         if ip.exists():
             try:
                 data = json.loads(ip.read_text())
-                # Flat‑list format (ToolStore registry)
                 if isinstance(data, list):
                     for tdef in data:
                         if not isinstance(tdef, dict):
@@ -668,7 +644,6 @@ class _Handler(SimpleHTTPRequestHandler):
                             "enabled": True, "exposure": "hidden",
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
-                # Legacy dict format
                 else:
                     for name, tdef in data.get("tools", {}).items():
                         if name in result["mcp"] or name in result["skills"]:
@@ -679,6 +654,8 @@ class _Handler(SimpleHTTPRequestHandler):
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
             except Exception: pass
+
+        # Local toolsets (from local_registry.json)
         im = IndexManager(); im.load()
         for name, entry in im._local_tools.items():
             if entry.get("type") != "toolset":
@@ -692,33 +669,55 @@ class _Handler(SimpleHTTPRequestHandler):
         self._json(result)
 
     def _patch_tool(self, name: str, body: dict):
+        """Patch a tool's exposure/enabled/etc.  Searches MCP servers, skills, and toolsets."""
         cfg = api_mcp.load_config()
-        tools = cfg.setdefault("tools", {})
         im = IndexManager(); im.load()
-        in_local = name in im._local_tools
-        target = tools if name in tools else (im._local_tools if in_local else None)
+
+        target: dict | None = None
+        target_key: str = ""
+
+        # 1. Search MCP servers' tools dicts
+        servers = cfg.get("mcp_servers", {})
+        if isinstance(servers, dict):
+            for sid, srv in servers.items():
+                if isinstance(srv, dict) and name in srv.get("tools", {}):
+                    target = srv["tools"]
+                    target_key = name
+                    break
+
+        # 2. Search skill cache
         if target is None:
-            # Check if name matches an MCP server's display_name or server_id
-            servers = cfg.get("mcpServers", {})
+            raw_name = name[len("skill:"):] if name.startswith("skill:") else name
+            skill_cache = cfg.get("skill_cache", {})
+            if raw_name in skill_cache:
+                target = skill_cache
+                target_key = raw_name
+
+        # 3. Search local toolsets
+        in_local = name in im._local_tools
+        if target is None and in_local:
+            target = im._local_tools
+            target_key = name
+
+        # 4. Check MCP server-level (display_name or server_id)
+        if target is None:
             if isinstance(servers, dict):
                 for sid, srv in servers.items():
-                    if srv.get("display_name") == name or sid == name:
+                    if isinstance(srv, dict) and (srv.get("display_name") == name or sid == name):
                         res, code = api_mcp.patch_mcp_server(sid, body)
                         return self._json(res, code)
             return self._json({"error": "Tool not found"}, 404)
+
+        # Apply patch
         for k in ("exposure", "enabled", "parallel_safe", "subagent_safe"):
             if k in body:
-                target[name][k] = body[k]
-        # Persist – tools live in settings.json, toolsets live in local_registry.json.
-        # For toolsets we must sync BOTH locations: local_registry.json (Web UI)
-        # and settings.json (primary-tool functions read from cfg["toolsets"]).
-        if target is tools:
-            api_mcp.save_config(cfg)
-        else:
+                target[target_key][k] = body[k]
+
+        # Persist
+        if target is im._local_tools:
             im._save_local()
-            # Mirror to settings.json so get_primary_tool_* functions see it
             cfg.setdefault("toolsets", {})[name] = im._local_tools[name]
-            api_mcp.save_config(cfg)
+        api_mcp.save_config(cfg)
         self._json({"success": True, "tool": name})
 
     # ── helpers ───────────────────────────────────────────────────────

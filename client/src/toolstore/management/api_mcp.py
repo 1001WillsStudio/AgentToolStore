@@ -83,9 +83,10 @@ def add_mcp_server(body: dict) -> dict:
     if srv.get("auto_connect", True):
         try:
             tools = connect_and_discover(sid, srv)
+            srv_tools = cfg.setdefault("mcp_servers", {}).setdefault(sid, {}).setdefault("tools", {})
             for t in tools:
                 tn = t["name"]
-                cfg["tools"][tn] = {
+                srv_tools[tn] = {
                     "source": f"mcp:{sid}",
                     "enabled": True,
                     "exposure": tool_exposure,
@@ -116,10 +117,11 @@ def connect_mcp_server(sid: str) -> dict:
     mode = srv.get("mode", "toolset")
     exposure = srv.get("exposure", "secondary")
     tool_exposure = "hidden" if mode == "toolset" else exposure
+    srv_tools = cfg.setdefault("mcp_servers", {}).setdefault(sid, {}).setdefault("tools", {})
     for t in tools:
         tn = t["name"]
-        if tn not in cfg.get("tools", {}):
-            cfg["tools"][tn] = {
+        if tn not in srv_tools:
+            srv_tools[tn] = {
                 "source": f"mcp:{sid}",
                 "enabled": True,
                 "exposure": tool_exposure,
@@ -146,9 +148,8 @@ def remove_mcp_server(sid: str) -> dict:
     disconnect_server(sid)
     del cfg["mcp_servers"][sid]
 
-    prefix = f"mcp:{sid}"
-    cfg["tools"] = {k: v for k, v in cfg.get("tools", {}).items()
-                    if v.get("source") != prefix}
+    # Tools are stored under cfg["mcp_servers"][sid]["tools"] —
+    # deleting the server above removes them automatically.
     save_config(cfg)
     return {"success": True}, 200
 
@@ -172,15 +173,13 @@ def patch_mcp_server(server_id: str, body: dict) -> dict:
         updated["mode"] = new_mode
         prefix = f"mcp:{server_id}"
         if new_mode == "toolset" and old_mode != "toolset":
-            # Switching to toolset: hide all individual tools
-            for tn, ti in cfg.get("tools", {}).items():
-                if isinstance(ti, dict) and ti.get("source") == prefix:
+            for tn, ti in srv.get("tools", {}).items():
+                if isinstance(ti, dict):
                     ti["exposure"] = "hidden"
         elif new_mode == "individual" and old_mode != "individual":
-            # Switching to individual: restore tools to server's exposure
             exp = srv.get("exposure", "secondary")
-            for tn, ti in cfg.get("tools", {}).items():
-                if isinstance(ti, dict) and ti.get("source") == prefix:
+            for tn, ti in srv.get("tools", {}).items():
+                if isinstance(ti, dict):
                     ti["exposure"] = exp
 
     if "exposure" in body:
@@ -190,8 +189,8 @@ def patch_mcp_server(server_id: str, body: dict) -> dict:
         # Only sync tool exposures when mode is "individual"
         if srv.get("mode", "toolset") == "individual":
             synced = 0
-            for tn, ti in cfg.get("tools", {}).items():
-                if isinstance(ti, dict) and ti.get("source") == prefix:
+            for tn, ti in srv.get("tools", {}).items():
+                if isinstance(ti, dict):
                     ti["exposure"] = body["exposure"]
                     synced += 1
             updated["tools_synced"] = synced
