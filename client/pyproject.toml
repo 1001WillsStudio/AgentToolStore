@@ -58,6 +58,7 @@ toolstore = "toolstore.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolstore"]
+include = ["src/toolstore/webui/static/**/*"]
 
 [tool.hatch.build.targets.sdist]
 include = [

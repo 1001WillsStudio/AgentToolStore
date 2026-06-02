@@ -7,8 +7,7 @@ Serves the management SPA and provides a REST API for:
 
 Start it::
 
-    toolstore-webui --port 8765
-    python -m toolstore_webui.server
+    python -m toolstore.webui.server --port 8765
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-# ── API handlers live in the client package ───────────────────────────
-from toolstore.management.api_helpers import (
+# ── API handlers (sibling subpackage, core never imports webui) ──────
+from ..management.api_helpers import (
     disconnect_all_clients,
     disconnect_server,
     _config_manager,
@@ -31,15 +30,15 @@ from toolstore.management.api_helpers import (
     save_config as api_save_config,
     connect_and_discover as api_connect_and_discover,
 )
-from toolstore.management import api_mcp
-from toolstore.management import api_skills
+from ..management import api_mcp
+from ..management import api_skills
 
-from toolstore.toolset_manager import ToolsetDefinition, get_toolset_manager
-from toolstore.index_manager import IndexManager
-from toolstore.config_manager import ConfigManager
-from toolstore.skill_discovery import discover_skills
-from toolstore.skill_manager import get_skill_manager
-from toolstore.docker_pool import check_docker_available, dind_socket_check
+from ..toolset_manager import ToolsetDefinition, get_toolset_manager
+from ..index_manager import IndexManager
+from ..config_manager import ConfigManager
+from ..skill_discovery import discover_skills
+from ..skill_manager import get_skill_manager
+from ..docker_pool import check_docker_available, dind_socket_check
 
 import os
 import tempfile
