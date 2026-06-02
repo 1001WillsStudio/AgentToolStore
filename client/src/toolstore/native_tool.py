@@ -26,6 +26,16 @@ from toolstore.schema_converter import (
 index_manager = IndexManager()
 config_manager = ConfigManager()
 
+_index_manager: IndexManager | None = None
+
+
+def _get_im() -> IndexManager:
+    global _index_manager
+    if _index_manager is None:
+        _index_manager = IndexManager()
+    return _index_manager
+
+
 
 def load_toolstore_data():
     """Load index and config from disk."""
@@ -151,12 +161,11 @@ def _do_info(tool_name: str) -> str:
         return "Error: 'tool_name' argument is required for info action."
 
     # ── Check if tool_name is an MCP server (by id or display_name) ──
-    config_manager.load()
-    servers = config_manager.config.get("mcpServers", {})
-
-    # Try exact server_id match first
     mcp_tools: dict[str, dict] = {}
-    _mcp_servers = config_manager.config.get("mcpServers", {})
+    srv_info: dict = {}
+    im = _get_im(); im._load_local()
+    _mcp_servers = im._local_mcp
+    servers = im._local_mcp  # alias for server lookup below
     if isinstance(_mcp_servers, dict) and tool_name in _mcp_servers:
         for _tn, _ti in _mcp_servers[tool_name].get("tools", {}).items():
             if isinstance(_ti, dict):
@@ -262,8 +271,8 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
 
     # ── MCP servers (grouped toolsets) ──────────────────────────────
     mcp_tools_by_server: dict[str, list[str]] = {}
-    config_manager.load()
-    _mcp_servers2 = config_manager.config.get("mcpServers", {})
+    im = _get_im(); im._load_local()
+    _mcp_servers2 = im._local_mcp
     if isinstance(_mcp_servers2, dict):
         for _sid, _srv in _mcp_servers2.items():
             if not isinstance(_srv, dict):
@@ -273,7 +282,7 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
                     mcp_tools_by_server.setdefault(_sid, []).append(_tn)
 
     # Build display-name lookup for MCP servers
-    servers = config_manager.config.get("mcpServers", {})
+    servers = im._local_mcp
     server_display: dict[str, str] = {}
     display_to_server: dict[str, str] = {}  # reverse lookup for _do_secondary_prompt
     if isinstance(servers, dict):
@@ -319,46 +328,41 @@ def get_secondary_tool_names() -> list[str]:
     Always reloads config from disk so tools registered by external
     processes (e.g. the management UI) are visible immediately.
     """
-    config_manager.load()
+    im = _get_im(); im._load_local()
 
     names: list[str] = []
     mcp_servers: dict[str, str] = {}  # display_name → server_id
 
-    toolsets = config_manager.config.get("toolsets", {})
-    if isinstance(toolsets, dict):
-        for name, info in toolsets.items():
-            if isinstance(info, dict) and info.get("exposure") == "secondary":
-                names.append(name)
+    # Toolsets
+    for name, info in im._local_tools.items():
+        if isinstance(info, dict) and info.get("exposure") == "secondary":
+            names.append(name)
 
     # MCP tools → group by server (toolset mode) or list individually
-    servers = config_manager.config.get("mcpServers", {})
-    if isinstance(servers, dict):
-        for sid, srv in servers.items():
-            if not isinstance(srv, dict):
-                continue
-            srv_tools = srv.get("tools", {})
-            if srv.get("mode", "toolset") == "toolset":
-                if srv.get("exposure", "secondary") == "secondary":
-                    display = srv.get("display_name") or sid
-                    mcp_servers[display] = sid
-            else:
-                for tn, ti in srv_tools.items():
-                    if isinstance(ti, dict) and ti.get("exposure") == "secondary":
-                        names.append(tn)
+    for sid, srv in im._local_mcp.items():
+        if not isinstance(srv, dict):
+            continue
+        srv_tools = srv.get("tools", {})
+        if srv.get("mode", "toolset") == "toolset":
+            if srv.get("exposure", "secondary") == "secondary":
+                display = srv.get("display_name") or sid
+                mcp_servers[display] = sid
+        else:
+            for tn, ti in srv_tools.items():
+                if isinstance(ti, dict) and ti.get("exposure") == "secondary":
+                    names.append(tn)
 
     # Skills
-    skill_cache = config_manager.config.get("skills", {})
-    if isinstance(skill_cache, dict):
-        for sn, si in skill_cache.items():
-            if isinstance(si, dict) and si.get("exposure") == "secondary":
-                names.append(f"skill:{sn}")
+    for sn, si in im._local_skills.items():
+        if isinstance(si, dict) and si.get("exposure") == "secondary":
+            names.append(f"skill:{sn}")
 
     # ── Also include MCP servers whose server-level exposure is secondary,
     # even if their individual tools are hidden (the agent can discover
     # tools via tool_store info when it needs the server).
     # Only applies to toolset-mode servers.
-    if isinstance(servers, dict):
-        for sid, srv in servers.items():
+    if isinstance(im._local_mcp, dict):
+        for sid, srv in im._local_mcp.items():
             if not isinstance(srv, dict):
                 continue
             if srv.get("mode", "toolset") != "toolset":
@@ -377,27 +381,23 @@ def get_secondary_tool_names() -> list[str]:
 
 
 
-def _iter_individual_tools(cfg: Dict[str, Any]):
+def _iter_individual_tools():
     """Iterate ``(name, info)`` for all individual MCP tools and skills.
 
-    MCP tools live under ``cfg["mcpServers"][sid]["tools"]``;
-    skills live under ``cfg["skills"]``.
+    Reads from :class:`IndexManager` (``local_registry.json``).
     """
+    im = _get_im(); im._load_local()
     # MCP tools
-    servers = cfg.get("mcpServers", {})
-    if isinstance(servers, dict):
-        for sid, srv in servers.items():
-            if not isinstance(srv, dict):
-                continue
-            for tn, ti in srv.get("tools", {}).items():
-                if isinstance(ti, dict):
-                    yield tn, ti
+    for sid, srv in im._local_mcp.items():
+        if not isinstance(srv, dict):
+            continue
+        for tn, ti in srv.get("tools", {}).items():
+            if isinstance(ti, dict):
+                yield tn, ti
     # Skills
-    skills = cfg.get("skills", {})
-    if isinstance(skills, dict):
-        for sn, si in skills.items():
-            if isinstance(si, dict):
-                yield f"skill:{sn}", si
+    for sn, si in im._local_skills.items():
+        if isinstance(si, dict):
+            yield f"skill:{sn}", si
 
 
 # ---------------------------------------------------------------------------
@@ -428,20 +428,18 @@ def get_primary_tool_names() -> list[str]:
 
     Always reloads config from disk.
     """
-    config_manager.load()
+    im = _get_im(); im._load_local()
     names: list[str] = []
 
-    toolsets = config_manager.config.get("toolsets", {})
-    if isinstance(toolsets, dict):
-        for info in toolsets.values():
-            if not isinstance(info, dict):
-                continue
-            if info.get("exposure") != "primary":
-                continue
-            bindings = info.get("bindings", {})
-            names.extend(bindings.keys())
+    for info in im._local_tools.values():
+        if not isinstance(info, dict):
+            continue
+        if info.get("exposure") != "primary":
+            continue
+        bindings = info.get("bindings", {})
+        names.extend(bindings.keys())
 
-    for t_name, t_info in _iter_individual_tools(config_manager.config):
+    for t_name, t_info in _iter_individual_tools():
         if isinstance(t_info, dict) and t_info.get("exposure") == "primary":
             names.append(t_name)
 
@@ -459,12 +457,12 @@ def get_primary_tool_schemas() -> list[dict]:
     Tools whose names collide with native AuroraCoder tools are skipped
     with a warning.
     """
-    config_manager.load()
+    im = _get_im(); im._load_local()
     schemas: list[dict] = []
     seen: set[str] = set()
 
     # ── 1. Primary toolsets — load .py → @tool → schema ────────────────
-    toolsets = config_manager.config.get("toolsets", {})
+    toolsets = im._local_tools
     if isinstance(toolsets, dict):
         for ts_name, ts_info in toolsets.items():
             if not isinstance(ts_info, dict):
@@ -484,7 +482,7 @@ def get_primary_tool_schemas() -> list[dict]:
                 )
 
     # ── 2. Primary individual tools (MCP, skills) ──────────────────────
-    for t_name, t_info in _iter_individual_tools(config_manager.config):
+    for t_name, t_info in _iter_individual_tools():
         if not isinstance(t_info, dict):
             continue
         if t_info.get("exposure") != "primary":
@@ -577,10 +575,10 @@ def get_primary_tool_prompt() -> str:
     from pathlib import Path
     from toolstore.tool import _read_doc
 
-    config_manager.load()
+    im = _get_im(); im._load_local()
     blocks: list[str] = []
 
-    toolsets = config_manager.config.get("toolsets", {})
+    toolsets = im._local_tools
     if isinstance(toolsets, dict):
         for ts_name, ts_info in toolsets.items():
             if not isinstance(ts_info, dict):
@@ -612,7 +610,7 @@ def get_primary_tool_prompt() -> str:
             blocks.append("\n".join(parts))
 
     # ── Individual primary tools (MCP, skills) ──────────────────────
-    for t_name, t_info in _iter_individual_tools(config_manager.config):
+    for t_name, t_info in _iter_individual_tools():
         if not isinstance(t_info, dict):
             continue
         if t_info.get("exposure") != "primary":
@@ -636,8 +634,8 @@ def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
 
     Returns ``(toolset_name, toolset_info_dict)`` or ``None``.
     """
-    config_manager.load()
-    toolsets = config_manager.config.get("toolsets", {})
+    im = _get_im(); im._load_local()
+    toolsets = im._local_tools
     if isinstance(toolsets, dict):
         for ts_name, ts_info in toolsets.items():
             if not isinstance(ts_info, dict):
@@ -752,8 +750,8 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
     or the raw server id (e.g. "echo-server").  The ``function`` argument
     selects which individual MCP tool to execute.
     """
-    config_manager.load()
-    servers = config_manager.config.get("mcpServers", {})
+    im = _get_im(); im._load_local()
+    servers = im._local_mcp
     if not isinstance(servers, dict):
         return None
 
@@ -795,20 +793,17 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
-    """Execute an MCP tool resolved from toolset mode.
-
-    This is the toolset-mode counterpart of the individual-mode path.
-    The tool dict was built by ``_resolve_mcp_toolset`` with the specific
-    MCP tool name and server already resolved.
-    """
+    """Execute an MCP tool resolved from toolset mode."""
     from toolstore.exec_tools import _execute_mcp
+    from toolstore.index_manager import IndexManager
 
     function_name = args.get("function")
     if not function_name:
         return "Error: 'function' argument required. Specify which MCP tool to call."
 
-    # _execute_mcp expects the tool dict to have "name" and "mcp_server"
-    return _execute_mcp(tool, args, config_manager)
+    im = IndexManager()
+    im._load_local()
+    return _execute_mcp(tool, args, im)
 
 
 def _execute_toolset_inline(tool: Dict[str, Any], args: Dict[str, Any]) -> str:

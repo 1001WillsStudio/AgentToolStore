@@ -386,15 +386,17 @@ class MCPTool(Tool):
     def execute(self, **kwargs: Any) -> str:
         """Execute an MCP tool via the connection pool.
 
-        Self‑contained — no circular import into :mod:`exec_tools`.
+        Self‑contained — reads server config from IndexManager.
         """
         from toolstore.mcp_client import get_client
         from toolstore.schema_converter import flatten_mcp_content
-        from toolstore.native_tool import config_manager
+        from toolstore.index_manager import IndexManager
 
         function_name = kwargs.pop("function", self.name)
 
-        servers = config_manager.get_mcp_servers()
+        im = IndexManager()
+        im._load_local()
+        servers = im._local_mcp
         config = servers.get(self.server_id)
         if not config:
             return f"Error: MCP server '{self.server_id}' not found in config."

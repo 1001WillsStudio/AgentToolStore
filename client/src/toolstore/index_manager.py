@@ -18,6 +18,8 @@ class IndexManager:
         self._local_registry_file = self.config_dir / "local_registry.json"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.index_data: Dict[str, Any] = {"meta": {}, "tools": {}}
+        self._local_mcp: Dict[str, Dict[str, Any]] = {}
+        self._local_skills: Dict[str, Dict[str, Any]] = {}
         self._local_tools: Dict[str, Dict[str, Any]] = {}
 
     # ----------------------------------------------------------------
@@ -62,23 +64,68 @@ class IndexManager:
         self.index_data["meta"]["count"] = len(self.index_data["tools"])
         self.save()
 
-    # ── Local toolsets (own index file, never touches online_registry.json) ──
+    # ── Local registry (all 3 types: MCP / Skill / Toolset) ──
+
+    _migration_done: bool = False
 
     def _load_local(self) -> None:
-        """Load local toolsets from ``local_registry.json``."""
+        """Load all local state from ``local_registry.json``."""
         if self._local_registry_file.exists():
             try:
-                self._local_tools = json.loads(
-                    self._local_registry_file.read_text(encoding="utf-8"))
+                data = json.loads(self._local_registry_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
-                self._local_tools = {}
+                data = {}
         else:
-            self._local_tools = {}
+            data = {}
+
+        self._local_mcp = data.get("mcp_servers", {})
+        self._local_skills = data.get("skills", {})
+        self._local_tools = data.get("toolsets", {})
+        # Backward compat: old flat format — any toolset-type entries
+        legacy = {k: v for k, v in data.items()
+                  if k not in ("mcp_servers", "skills", "toolsets")
+                  and isinstance(v, dict) and v.get("type") == "toolset"}
+        if legacy:
+            self._local_tools.update(legacy)
+
+        # One-shot: migrate from settings.json → local_registry.json
+        if not self._migration_done:
+            self._migrate_from_settings()
+            self.__class__._migration_done = True
+
+    def _migrate_from_settings(self) -> None:
+        """Pull legacy MCP servers & skills from settings.json into local_registry.json."""
+        try:
+            from toolstore.config_manager import ConfigManager
+            cm = ConfigManager()
+            cm.load()
+            mcp = cm.config.pop("mcpServers", {})
+            if mcp and not self._local_mcp:
+                self._local_mcp = mcp
+            skills = cm.config.pop("skills", {})
+            if skills and not self._local_skills:
+                self._local_skills.update(skills)
+            cm.config.pop("tools", None)
+            toolsets = cm.config.pop("toolsets", {})
+            if toolsets:
+                for ts_name, ts_info in toolsets.items():
+                    if ts_name not in self._local_tools:
+                        self._local_tools[ts_name] = ts_info
+            if mcp or skills or toolsets:
+                cm.save()
+                self._save_local()
+        except Exception:
+            pass
 
     def _save_local(self) -> None:
-        """Write local toolsets to ``local_registry.json`` (never touches online_registry.json)."""
+        """Write all local state to ``local_registry.json``."""
         self._local_registry_file.write_text(
-            json.dumps(self._local_tools, indent=2), encoding="utf-8")
+            json.dumps({
+                "mcp_servers": self._local_mcp,
+                "skills": self._local_skills,
+                "toolsets": self._local_tools,
+            }, indent=2), encoding="utf-8")
+
 
     def discover_local_toolsets(self, toolset_dirs: List[str]) -> None:
         """Scan local toolset directories and persist to ``local_registry.json``.
