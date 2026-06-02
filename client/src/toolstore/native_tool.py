@@ -347,7 +347,7 @@ def get_secondary_tool_names() -> list[str]:
                         names.append(tn)
 
     # Skills
-    skill_cache = config_manager.config.get("skill_cache", {})
+    skill_cache = config_manager.config.get("skills", {})
     if isinstance(skill_cache, dict):
         for sn, si in skill_cache.items():
             if isinstance(si, dict) and si.get("exposure") == "secondary":
@@ -381,7 +381,7 @@ def _iter_individual_tools(cfg: Dict[str, Any]):
     """Iterate ``(name, info)`` for all individual MCP tools and skills.
 
     MCP tools live under ``cfg["mcpServers"][sid]["tools"]``;
-    skills live under ``cfg["skill_cache"]``.
+    skills live under ``cfg["skills"]``.
     """
     # MCP tools
     servers = cfg.get("mcpServers", {})
@@ -393,7 +393,7 @@ def _iter_individual_tools(cfg: Dict[str, Any]):
                 if isinstance(ti, dict):
                     yield tn, ti
     # Skills
-    skills = cfg.get("skill_cache", {})
+    skills = cfg.get("skills", {})
     if isinstance(skills, dict):
         for sn, si in skills.items():
             if isinstance(si, dict):

@@ -238,9 +238,9 @@ class _Handler(SimpleHTTPRequestHandler):
             for ds in result.invalid_skills:
                 failed.append({"name": ds.name or str(ds.rel_path), "error": "; ".join(ds.errors)})
             for d in sm.skill_dirs: cm.add_skill_dir(str(d))
-            cfg = api_mcp.load_config(); cfg.setdefault("skill_cache", {})
+            cfg = api_mcp.load_config(); cfg.setdefault("skills", {})
             for name in registered:
-                cfg["skill_cache"][name] = {
+                cfg["skills"][name] = {
                     "source": f"skill:{name}", "enabled": True,
                     "exposure": "secondary", "parallel_safe": False,
                     "subagent_safe": False, "description": ""}
@@ -613,8 +613,8 @@ class _Handler(SimpleHTTPRequestHandler):
                             "subagent_safe": ti.get("subagent_safe", False),
                             "description": ti.get("description", "")}
 
-        # Skills (from cfg["skill_cache"])
-        skill_cache = cfg.get("skill_cache", {})
+        # Skills (from cfg["skills"])
+        skill_cache = cfg.get("skills", {})
         if isinstance(skill_cache, dict):
             for sn, si in skill_cache.items():
                 if not isinstance(si, dict):
@@ -688,7 +688,7 @@ class _Handler(SimpleHTTPRequestHandler):
         # 2. Search skill cache
         if target is None:
             raw_name = name[len("skill:"):] if name.startswith("skill:") else name
-            skill_cache = cfg.get("skill_cache", {})
+            skill_cache = cfg.get("skills", {})
             if raw_name in skill_cache:
                 target = skill_cache
                 target_key = raw_name
