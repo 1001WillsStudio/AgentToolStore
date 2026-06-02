@@ -47,14 +47,24 @@ def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
 # ---------------------------------------------------------------------------
 
 def _execute_mcp(tool: Dict[str, Any], args: Dict[str, Any],
-                 config_manager) -> str:
+                 _config_manager_unused=None) -> str:
+    """Execute an MCP tool by connecting to its server.
+
+    Looks up the server config exclusively in :class:`IndexManager`'s
+    ``local_registry.json`` — ``settings.json`` is for agent settings
+    only, never for MCP server definitions.
+    """
 
     server_name = tool.get("mcp_server")
     if not server_name:
         return "Error: Tool definition missing 'mcp_server'"
 
-    servers = config_manager.get_mcp_servers()
-    config = servers.get(server_name)
+    # Server config lives in local_registry.json (IndexManager), NOT settings.json
+    from toolstore.index_manager import IndexManager
+    im = IndexManager()
+    im._load_local()
+    config = im._local_mcp.get(server_name)
+
     if not config:
         return f"Error: MCP server '{server_name}' not found in config."
 
