@@ -21,30 +21,17 @@ def execute_tool(tool: Dict[str, Any], args: Dict[str, Any],
     """Dispatch a single tool execution to the correct backend.
 
     Returns the result as a JSON or plain-text string.
-    """
-    tool_name = tool["name"]
-    tool_type = tool.get("type", "unknown")
 
-    if tool_type == "mcp":
-        return _execute_mcp(tool, args, config_manager)
-    elif tool_type == "mcp_toolset":
-        # Toolset-mode: resolve function → find specific MCP tool → execute
-        function_name = args.get("function")
-        if not function_name:
-            return "Error: 'function' argument required for MCP toolset."
-        tools = config_manager.config.get("tools", {})
-        mcp_tool = tools.get(function_name)
-        if not mcp_tool or not isinstance(mcp_tool, dict):
-            return f"Error: MCP tool '{function_name}' not found."
-        mcp_tool = dict(mcp_tool)
-        mcp_tool["name"] = function_name
-        return _execute_mcp(mcp_tool, args, config_manager)
-    elif tool_type == "skill":
-        return _execute_skill(tool, args, config_manager)
-    elif tool_type == "toolset":
-        return _execute_toolset(tool, args)
-    else:
-        return f"Error: Unknown tool type '{tool_type}'"
+    Uses the :class:`~toolstore.tool.Tool` class hierarchy for
+    polymorphic dispatch — no more ``if tool_type == ...`` chains.
+    """
+    from toolstore.tool import Tool
+
+    try:
+        t = Tool.from_dict(tool)
+        return t.execute(**args)
+    except ValueError as e:
+        return str(e)
 
 
 # ---------------------------------------------------------------------------

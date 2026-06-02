@@ -176,12 +176,13 @@ from typing import Callable
 # Python @tool callable → OpenAI function schema
 # ---------------------------------------------------------------------------
 
-def callable_to_openai(fn: Callable) -> dict:
-    """Convert a @tool-decorated Python callable to an OpenAI function-calling schema.
+def tool_fn_to_openai(fn: Callable) -> dict:
+    """Convert a ``@tool``-decorated Python callable to an OpenAI function‑calling schema.
 
-    Uses ``toolset.generate_definition()`` to derive the schema from type hints
-    and docstring, then wraps it in the ``{"type": "function", "function": ...}``
-    envelope that OpenAI API expects.
+    Uses :func:`toolset.generate_definition` to derive the schema from type
+    hints and docstring, then wraps it in the ``{"type": "function",
+    "function": ...}`` envelope that the OpenAI API expects for conversation
+    tool definitions.
     """
     from toolstore.toolset import generate_definition
     inner = generate_definition(fn)

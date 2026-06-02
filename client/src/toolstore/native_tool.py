@@ -430,7 +430,7 @@ def get_primary_tool_schemas() -> list[dict]:
 
     For toolset‑level primary exposure the toolset ``.py`` file is loaded
     and each ``@tool`` callable is converted to an OpenAI schema via
-    :func:`callable_to_openai`.  For individual primary tools the index
+    :func:`tool_fn_to_openai`.  For individual primary tools the index
     definition is converted via :func:`toolstore_to_openai`.
 
     Tools whose names collide with native AuroraCoder tools are skipped
@@ -490,7 +490,7 @@ def _load_primary_toolset_schemas(
     import importlib.util
     from pathlib import Path
     from toolstore.toolset import clear_registry, get_tool_names as _gn, get_tool
-    from toolstore.schema_converter import callable_to_openai
+    from toolstore.schema_converter import tool_fn_to_openai
 
     ts_file = Path(ts_dir) / "toolset.py"
     if not ts_file.exists():
@@ -527,7 +527,7 @@ def _load_primary_toolset_schemas(
         fn = get_tool(fn_name)
         if fn is None:
             continue
-        schema = callable_to_openai(fn)
+        schema = tool_fn_to_openai(fn)
         result.append(schema)
         seen.add(fn_name)
 
@@ -538,15 +538,26 @@ def _load_primary_toolset_schemas(
 def get_primary_tool_prompt() -> str:
     """Build a compact text block listing primary tools for the system message.
 
-    Format: one line per function with its description, e.g.::
+    Groups tools by toolset and reads ``{toolset_dir}/doc.md`` for the
+    full documentation body.  Function descriptions are NOT included —
+    those already live in the OpenAI schemas.
 
-        - calculator — Evaluate a mathematical expression
-        - echo_service — Send a message and get an echo reply
+    Format::
+
+        ### calc-toolkit
+        Safe expression evaluation, unit conversion, and basic statistics.
+        Pure‑stdlib — no dependencies.
+
+        - eval_expression
+        - convert_unit
 
     Returns an empty string when no primary tools are configured.
     """
+    from pathlib import Path
+    from toolstore.tool import _read_doc
+
     config_manager.load()
-    lines: list[str] = []
+    blocks: list[str] = []
 
     toolsets = config_manager.config.get("toolsets", {})
     if isinstance(toolsets, dict):
@@ -555,24 +566,53 @@ def get_primary_tool_prompt() -> str:
                 continue
             if ts_info.get("exposure") != "primary":
                 continue
-            bindings = ts_info.get("bindings", {})
-            for fn_name, fn_info in bindings.items():
-                if fn_name in _NATIVE_NAMES:
-                    continue
-                desc = (
-                    fn_info.get("description", "")
-                    if isinstance(fn_info, dict)
-                    else ""
-                )
-                if desc:
-                    lines.append(f"- {fn_name} — {desc}")
-                else:
-                    lines.append(f"- {fn_name}")
 
-    if not lines:
+            bindings = ts_info.get("bindings", {})
+            fn_names = [
+                fn for fn in bindings
+                if fn not in _NATIVE_NAMES
+            ]
+            if not fn_names:
+                continue
+
+            fn_names.sort()
+
+            # ── doc.md full body ─────────────────────────────────
+            ts_dir = ts_info.get("directory", "")
+            doc = ""
+            if ts_dir:
+                doc_path = Path(ts_dir) / "doc.md"
+                doc = _read_doc(doc_path)
+
+            parts = [f"### {ts_name}"]
+            if doc:
+                parts.append(doc)
+            parts.extend(f"- {fn}" for fn in fn_names)
+            blocks.append("\n".join(parts))
+
+    # ── Individual primary tools (MCP, skills) ──────────────────────
+    tools = config_manager.config.get("tools", {})
+    if isinstance(tools, dict):
+        for t_name, t_info in tools.items():
+            if not isinstance(t_info, dict):
+                continue
+            if t_info.get("exposure") != "primary":
+                continue
+            if t_name in _NATIVE_NAMES:
+                continue
+            if isinstance(tinfo, dict):
+                desc = t_info.get("description", "")
+            else:
+                desc = ""
+            if desc:
+                blocks.append(f"- {t_name} — {desc}")
+            else:
+                blocks.append(f"- {t_name}")
+
+    if not blocks:
         return ""
 
-    return "\n".join(lines)
+    return "\n".join(blocks)
 
 
 def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
@@ -668,15 +708,19 @@ def _do_execute(tool_name: str, args: Dict[str, Any]) -> str:
 
     tool_type = tool.get("type", "unknown")
 
-    # toolset → fast inline path
+    # ── polymorphic dispatch via the Tool class hierarchy ────────────
+    from toolstore.tool import Tool
+    try:
+        t = Tool.from_dict(tool)
+        return t.execute(**args)
+    except ValueError:
+        pass
+
+    # ── edge‑case fallbacks (should rarely trigger) ────────────────
     if tool_type == "toolset":
         return _execute_toolset_inline(tool, args)
-
-    # mcp_toolset → resolve function → dispatch to MCP backend
     if tool_type == "mcp_toolset":
         return _execute_mcp_toolset(tool, args)
-
-    # mcp / skill / everything else → exec_tools dispatch
     from toolstore.exec_tools import execute_tool
     return execute_tool(tool, args, config_manager, index_manager)
 
