@@ -9,16 +9,28 @@ Consolidates all MCP / Skill / Toolset state into
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
+import threading
+import time
+from pathlib import Path
 from typing import Any
 
 from ..config_manager import ConfigManager
 from ..index_manager import IndexManager
+from ..mcp_client import FullMCPClient
 
 _SPA_MCP_KEY = "mcp_servers"
 _CLI_MCP_KEY = "mcpServers"
 
 _CM_SINGLETON: ConfigManager | None = None
 _IM_SINGLETON: IndexManager | None = None
+
+# MCP connection state
+_pool_lock = threading.Lock()
+_connection_pool: dict[str, FullMCPClient] = {}
+_mcp_processes: dict[str, subprocess.Popen] = {}
 
 
 def _config_manager() -> ConfigManager:
@@ -103,9 +115,7 @@ def count_mcp_tools(cfg: dict, server_id: str) -> int:
     return len(cfg.get("mcp_servers", {}).get(server_id, {}).get("tools", {}))
 
 
-# ── MCP connection state ──
-
-_mcp_processes: dict[str, subprocess.Popen] = {}
+# ── MCP connection state ── (pool + processes shared with tab_mcp)
 
 
 def mcp_status(server_id: str) -> str:
@@ -195,15 +205,10 @@ def disconnect_server(server_id: str) -> None:
 
 
 def disconnect_all_clients() -> None:
+    """Disconnect all MCP clients and terminate child processes."""
     with _pool_lock:
         server_ids = list(_connection_pool.keys())
     for cid in server_ids:
         disconnect_server(cid)
     for pid in list(_mcp_processes.keys()):
         shutdown_mcp_process(pid)
-    try: disconnect_all()
-    except Exception: pass
-
-
-def count_mcp_tools(cfg: dict, server_id: str) -> int:
-    return len(cfg.get("mcp_servers", {}).get(server_id, {}).get("tools", {}))

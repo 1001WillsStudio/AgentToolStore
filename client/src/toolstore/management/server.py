@@ -19,7 +19,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-from .api_helpers import disconnect_all_clients, disconnect_server, _config_manager
+from .api_helpers import disconnect_all_clients, disconnect_server, _config_manager, _index_manager
 from . import api_mcp, api_skills
 import os
 import tempfile
@@ -712,8 +712,10 @@ class _Handler(SimpleHTTPRequestHandler):
             if k in body:
                 target[target_key][k] = body[k]
 
-        # Persist — one atomic save, no singleton interaction
+        # Persist to disk, then sync the singleton so subsequent
+        # save_config() calls don't accidentally overwrite with stale data.
         im._save_local()
+        _index_manager()._load_local()
         self._json({"success": True, "tool": name})
 
     # ── helpers ───────────────────────────────────────────────────────
