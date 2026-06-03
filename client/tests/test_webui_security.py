@@ -20,65 +20,52 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 class TestListFilesPathTraversal:
-    """Verify path traversal is blocked."""
+    """Verify path traversal is blocked — safe_roots are now built from
+    configured skill/toolset dirs + /workspace + /tmp (NOT Path.home())."""
 
-    def test_safe_path_allowed(self) -> None:
-        """`/tmp` should be allowed (in safe_roots)."""
-        # We test the logic directly: the handler's _list_files uses
-        # safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        path = Path("/tmp")
-        assert any(
-            path == sr or sr in path.parents or str(path).startswith(str(sr))
-            for sr in safe_roots
-        ), "/tmp should be in safe_roots"
-
-    def test_etc_blocked(self) -> None:
-        """`/etc` should be blocked (not in safe_roots)."""
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        path = Path("/etc")
-        allowed = any(
-            path == sr or sr in path.parents or str(path).startswith(str(sr))
+    # Mirror the logic in server.py _list_files
+    @staticmethod
+    def _is_safe(path: str, extra_dirs: list[str] | None = None) -> bool:
+        safe_roots: list[Path] = [Path("/workspace"), Path("/tmp")]
+        for d in (extra_dirs or []):
+            resolved = Path(d).expanduser().resolve()
+            if resolved not in safe_roots:
+                safe_roots.append(resolved)
+        fp = Path(path).expanduser().resolve()
+        return any(
+            fp == sr or sr in fp.parents or str(fp).startswith(str(sr))
             for sr in safe_roots
         )
-        assert not allowed, "/etc should NOT be in safe_roots"
-
-    def test_proc_blocked(self) -> None:
-        """`/proc` should be blocked."""
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        path = Path("/proc")
-        allowed = any(
-            path == sr or sr in path.parents or str(path).startswith(str(sr))
-            for sr in safe_roots
-        )
-        assert not allowed, "/proc should NOT be in safe_roots"
 
     def test_workspace_allowed(self) -> None:
-        """`/workspace` should be allowed (explicitly in safe_roots)."""
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        path = Path("/workspace")
-        assert any(
-            path == sr or sr in path.parents or str(path).startswith(str(sr))
-            for sr in safe_roots
-        ), "/workspace should be in safe_roots"
+        assert self._is_safe("/workspace"), "/workspace should be allowed"
 
-    def test_home_allowed(self) -> None:
-        """``Path.home()`` should always be allowed."""
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        assert any(
-            Path.home() == sr or sr in Path.home().parents
-            or str(Path.home()).startswith(str(sr))
-            for sr in safe_roots
-        ), "home directory should be in safe_roots"
+    def test_tmp_allowed(self) -> None:
+        assert self._is_safe("/tmp"), "/tmp should be allowed"
 
-    def test_subdirectory_of_workspace_allowed(self) -> None:
-        """`/workspace/AgentToolStore` should be allowed (child of safe root)."""
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
-        path = Path("/workspace/AgentToolStore")
-        assert any(
-            path == sr or sr in path.parents or str(path).startswith(str(sr))
-            for sr in safe_roots
-        ), "subdir of /workspace should be allowed"
+    def test_subdir_of_workspace_allowed(self) -> None:
+        assert self._is_safe("/workspace/AgentToolStore"), (
+            "subdir of /workspace should be allowed"
+        )
+
+    def test_etc_blocked(self) -> None:
+        assert not self._is_safe("/etc"), "/etc should be blocked"
+
+    def test_proc_blocked(self) -> None:
+        assert not self._is_safe("/proc"), "/proc should be blocked"
+
+    def test_root_blocked_in_docker(self) -> None:
+        """In Docker, Path.home() == /root. That should NOT be auto-allowed."""
+        # Unless /root is explicitly added as a configured dir, it's blocked
+        assert not self._is_safe("/root"), (
+            "/root should be blocked (not in safe_roots by default)"
+        )
+
+    def test_extra_dirs_are_allowed(self) -> None:
+        """Configured skill/toolset dirs should be added to safe_roots."""
+        assert self._is_safe("/home/user/skills", extra_dirs=["/home/user/skills"]), (
+            "explicitly configured dir should be allowed"
+        )
 
 
 class TestBodyJSONError:
