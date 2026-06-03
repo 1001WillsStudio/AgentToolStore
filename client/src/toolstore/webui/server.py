@@ -204,8 +204,15 @@ class _Handler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(q)
         path = params.get("path", [""])[0] or "~"
         fp = Path(path).expanduser().resolve()
-        # Restrict to safe locations — prevent listing system dirs
-        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
+        # Build safe_roots from configured dirs + sensible defaults.
+        # In Docker, Path.home() is /root — don't blindly include it.
+        cm = _config_manager()
+        cm.load()
+        safe_roots: list[Path] = [Path("/workspace"), Path("/tmp")]
+        for d in cm.get_skill_dirs() + cm.get_toolset_dirs():
+            resolved = Path(d).expanduser().resolve()
+            if resolved not in safe_roots:
+                safe_roots.append(resolved)
         if not any(fp == sr or sr in fp.parents or str(fp).startswith(str(sr)) for sr in safe_roots):
             return self._json({"error": "Access denied — path outside allowed directories"}, 403)
         if not fp.is_dir():
