@@ -54,6 +54,14 @@ class IndexManager:
         """Re-read remote registry AND local state from disk."""
         self.load()
 
+    def save_local(self) -> None:
+        """Persist local tool/skill/MCP state to ``local_registry.json``.
+
+        Unlike :meth:`save` (which writes index/remote data), this saves
+        the locally-registered tools, skills, and MCP servers.
+        """
+        self._save_local()
+
     def save(self):
         """Save current in-memory registry to disk."""
         with open(self.registry_file, "w", encoding="utf-8") as f:
