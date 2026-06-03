@@ -781,7 +781,7 @@ class _Handler(SimpleHTTPRequestHandler):
         # Persist to disk, then sync the singleton so subsequent
         # save_config() calls don't accidentally overwrite with stale data.
         im._save_local()
-        _index_manager()._load_local()
+        _index_manager().reload()
         self._json({"success": True, "tool": name})
 
     # ── helpers ───────────────────────────────────────────────────────

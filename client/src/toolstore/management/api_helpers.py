@@ -49,6 +49,24 @@ def _index_manager() -> IndexManager:
     return _IM_SINGLETON
 
 
+def refresh_config() -> None:
+    """Force the ConfigManager singleton to reload from disk.
+
+    Call this after any external modification (e.g. WebUI writes) to ensure
+    subsequent reads see the latest data.
+    """
+    _config_manager().load()
+
+
+def refresh_index() -> None:
+    """Force the IndexManager singleton to reload local state from disk.
+
+    Call this after any external modification (e.g. WebUI writes) to ensure
+    subsequent reads see the latest data.
+    """
+    _index_manager().reload()
+
+
 # ── migration from settings.json to local_registry.json ──────────────
 
 def _migrate_from_settings(im: IndexManager) -> None:
@@ -77,7 +95,7 @@ def _migrate_from_settings(im: IndexManager) -> None:
 def load_config() -> dict:
     """Return a merged view: tool data from IndexManager + settings from ConfigManager."""
     im = _index_manager()
-    im._load_local()
+    im.reload()
     
     _migrate_from_settings(im)
     
@@ -98,7 +116,7 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     """Persist tool data → IndexManager, settings → ConfigManager."""
     im = _index_manager()
-    im._load_local()
+    im.reload()
     im._local_mcp = cfg.get("mcp_servers", {})
     im._local_skills = cfg.get("skills", {})
     im._local_tools = cfg.get("toolsets", {})

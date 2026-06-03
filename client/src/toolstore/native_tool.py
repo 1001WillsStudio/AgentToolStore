@@ -170,7 +170,7 @@ def _do_info(tool_name: str) -> str:
     mcp_tools: dict[str, dict] = {}
     srv_info: dict = {}
     im = _get_im()
-    im._load_local()
+    im.reload()
     _mcp_servers = im._local_mcp
     servers = im._local_mcp  # alias for server lookup below
     if isinstance(_mcp_servers, dict) and tool_name in _mcp_servers:
@@ -278,7 +278,7 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
     # ── MCP servers (grouped toolsets) ──────────────────────────────
     mcp_tools_by_server: dict[str, list[str]] = {}
     im = _get_im()
-    im._load_local()
+    im.reload()
     _mcp_servers2 = im._local_mcp
     if isinstance(_mcp_servers2, dict):
         for _sid, _srv in _mcp_servers2.items():
@@ -336,7 +336,7 @@ def get_secondary_tool_names() -> list[str]:
     processes (e.g. the management UI) are visible immediately.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
 
     names: list[str] = []
     mcp_servers: dict[str, str] = {}  # display_name → server_id
@@ -395,7 +395,7 @@ def _iter_individual_tools():
     Reads from :class:`IndexManager` (``local_registry.json``).
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     # MCP tools
     for sid, srv in im._local_mcp.items():
         if not isinstance(srv, dict):
@@ -439,7 +439,7 @@ def get_primary_tool_names() -> list[str]:
     Always reloads config from disk.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     names: list[str] = []
 
     for info in im._local_tools.values():
@@ -484,7 +484,7 @@ def get_primary_tool_schemas() -> list[dict]:
     with a warning.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     schemas: list[dict] = []
     seen: set[str] = set()
 
@@ -621,7 +621,7 @@ def get_primary_tool_prompt() -> str:
     """
 
     im = _get_im()
-    im._load_local()
+    im.reload()
     blocks: list[str] = []
 
     toolsets = im._local_tools
@@ -699,7 +699,7 @@ def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
     Returns ``(toolset_name, toolset_info_dict)`` or ``None``.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     toolsets = im._local_tools
     if isinstance(toolsets, dict):
         for ts_name, ts_info in toolsets.items():
@@ -764,7 +764,7 @@ def _find_primary_mcp_tool(name: str) -> Optional[Dict[str, Any]]:
     :func:`_execute_mcp` can consume, or ``None``.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     servers = im._local_mcp
     if not isinstance(servers, dict):
         return None
@@ -865,7 +865,7 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
     selects which individual MCP tool to execute.
     """
     im = _get_im()
-    im._load_local()
+    im.reload()
     servers = im._local_mcp
     if not isinstance(servers, dict):
         return None
@@ -915,7 +915,7 @@ def _execute_mcp_toolset(tool: Dict[str, Any], args: Dict[str, Any]) -> str:
         return "Error: 'function' argument required. Specify which MCP tool to call."
 
     im = IndexManager()
-    im._load_local()
+    im.reload()
     return _execute_mcp(tool, args, im)
 
 
