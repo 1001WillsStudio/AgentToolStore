@@ -31,7 +31,7 @@ from ..management import api_skills
 
 from ..toolset_manager import ToolsetDefinition, get_toolset_manager
 from ..index_manager import IndexManager
-from ..config_manager import ConfigManager
+# ConfigManager accessed via _config_manager() helper (api_helpers)
 from ..skill_discovery import discover_skills
 from ..skill_manager import get_skill_manager
 from ..docker_pool import check_docker_available, dind_socket_check
@@ -204,6 +204,10 @@ class _Handler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(q)
         path = params.get("path", [""])[0] or "~"
         fp = Path(path).expanduser().resolve()
+        # Restrict to safe locations — prevent listing system dirs
+        safe_roots = [Path.home(), Path("/workspace"), Path("/tmp")]
+        if not any(fp == sr or sr in fp.parents or str(fp).startswith(str(sr)) for sr in safe_roots):
+            return self._json({"error": "Access denied — path outside allowed directories"}, 403)
         if not fp.is_dir():
             return self._json({"error": "Not a directory"}, 400)
         entries = []
@@ -247,7 +251,7 @@ class _Handler(SimpleHTTPRequestHandler):
             result = discover_skills(tmp)
             if result.total == 0:
                 return self._json({"error": "No SKILL.md found in uploaded archive"}, 400)
-            cm = ConfigManager()
+            cm = _config_manager()
             cm.load()
             sm = get_skill_manager(cm.get_skill_dirs())
             registered, failed = [], []
@@ -313,7 +317,7 @@ class _Handler(SimpleHTTPRequestHandler):
             if not toolset_dirs:
                 return self._json({"error": "No toolset found in uploaded archive (requires at least one .md file)"}, 400)
 
-            cm = ConfigManager()
+            cm = _config_manager()
             cm.load()
             im = IndexManager()
             im.load()
@@ -380,7 +384,7 @@ class _Handler(SimpleHTTPRequestHandler):
         td = ToolsetDefinition(ts_path)
         if not td.load():
             return self._json({"error": "Toolset validation failed", "details": td.errors}, 400)
-        cm = ConfigManager()
+        cm = _config_manager()
         cm.load()
         persistent_root = cm.config_dir / "toolsets"
         persistent_root.mkdir(parents=True, exist_ok=True)
@@ -412,7 +416,7 @@ class _Handler(SimpleHTTPRequestHandler):
         fp = Path(path).expanduser().resolve()
         if not fp.is_dir():
             return self._json({"error": f"Not a directory: {fp}"}, 400)
-        cm = ConfigManager()
+        cm = _config_manager()
         cm.load()
         cm.add_toolset_dir(str(fp))
         mgr = get_toolset_manager([str(fp)])
@@ -460,7 +464,7 @@ class _Handler(SimpleHTTPRequestHandler):
 
     def _list_registry_toolsets(self):
         cm = _config_manager()
-        ip = _config_manager().config_dir / "online_registry.json"
+        ip = cm.config_dir / "online_registry.json"
 
         q = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(q)
@@ -529,7 +533,7 @@ class _Handler(SimpleHTTPRequestHandler):
         if not name:
             return self._json({"error": "name is required"}, 400)
         cm = _config_manager()
-        ip = _config_manager().config_dir / "online_registry.json"
+        ip = cm.config_dir / "online_registry.json"
         if not ip.exists():
             return self._json({"error": "Registry index not found"}, 404)
         try:
@@ -684,9 +688,9 @@ class _Handler(SimpleHTTPRequestHandler):
                     "subagent_safe": si.get("subagent_safe", False),
                     "description": si.get("description", "")}
 
-        # Registry toolsets (online_registry.json — unchanged)
-        _config_manager()
-        ip = _config_manager().config_dir / "online_registry.json"
+        # Registry toolsets (online_registry.json)
+        cm = _config_manager()
+        ip = cm.config_dir / "online_registry.json"
         if ip.exists():
             try:
                 data = json.loads(ip.read_text())
@@ -789,7 +793,8 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             return json.loads(self.rfile.read(length))
         except json.JSONDecodeError:
-            return {}
+            logger.debug("Invalid JSON in request body", exc_info=True)
+            return {"error": "Invalid JSON body"}
 
     def _json(self, data: dict, status: int = 200):
         body = json.dumps(data, indent=2).encode()
