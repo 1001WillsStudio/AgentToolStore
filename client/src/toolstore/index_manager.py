@@ -1,11 +1,13 @@
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from toolstore.config_manager import ConfigManager
 from toolstore.toolset_manager import ToolsetDefinition
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class IndexManager:
@@ -116,6 +118,7 @@ class IndexManager:
                 cm.save()
                 self._save_local()
         except Exception:
+            logger.debug("Suppressed exception in index_manager.py", exc_info=True)
             pass
 
     def _save_local(self) -> None:

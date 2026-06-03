@@ -6,9 +6,6 @@ Provides four functions for working with .xlsx files without needing
 to write throw‑away scripts for every spreadsheet task.
 """
 
-import io
-import json
-import sys
 from pathlib import Path
 
 try:

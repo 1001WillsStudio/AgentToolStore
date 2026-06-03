@@ -6,9 +6,6 @@ Handles the messy reality of PDF parsing (multi‑column layouts,
 Unicode, encrypted files) so agents don't have to guess.
 """
 
-import io
-import json
-import sys
 from pathlib import Path
 
 try:
@@ -206,11 +203,16 @@ def pdf_form_fields(*, filepath: str) -> dict:
             }
             ff = info.get("/Ff", 0)
             if isinstance(ff, int):
-                if ff & 1: field["flags"].append("readOnly")
-                if ff & 2: field["flags"].append("required")
-                if ff & 4: field["flags"].append("noExport")
-                if ff & 0x10000: field["flags"].append("multiLine")
-                if ff & 0x20000: field["flags"].append("password")
+                if ff & 1:
+                    field["flags"].append("readOnly")
+                if ff & 2:
+                    field["flags"].append("required")
+                if ff & 4:
+                    field["flags"].append("noExport")
+                if ff & 0x10000:
+                    field["flags"].append("multiLine")
+                if ff & 0x20000:
+                    field["flags"].append("password")
             opts = info.get("/Opt")
             if opts:
                 field["options"] = [str(o) if not isinstance(o, list) else str(o[0])

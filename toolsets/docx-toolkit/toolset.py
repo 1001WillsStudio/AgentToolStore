@@ -6,7 +6,6 @@ Read text, inspect structure, extract tables, manage comments and tracked
 changes — without needing to write throw‑away scripts for every document task.
 """
 
-import io
 from pathlib import Path
 
 try:
@@ -183,7 +182,6 @@ def docx_create(*, filepath: str, title: str = "",
     """
     try:
         from docx import Document
-        from docx.shared import Pt, Inches
     except ImportError:
         return {"error": "python-docx not installed — run: pip install python-docx"}
 
@@ -201,7 +199,7 @@ def docx_create(*, filepath: str, title: str = "",
 
     # Title
     if title:
-        h = doc.add_heading(title, level=1)
+        doc.add_heading(title, level=1)
 
     # Content paragraphs
     for item in (content or []):

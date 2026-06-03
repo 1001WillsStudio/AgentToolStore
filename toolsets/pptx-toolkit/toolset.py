@@ -128,7 +128,6 @@ def pptx_create(*, filepath: str, title: str = "",
     """
     try:
         from pptx import Presentation
-        from pptx.util import Inches, Pt
     except ImportError:
         return {"error": "python-pptx not installed — run: pip install python-pptx"}
 

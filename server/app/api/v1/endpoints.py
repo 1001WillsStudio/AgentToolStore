@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
-from typing import List, Any
+from typing import List
 
 from app.db import get_session
 from app.models import Tool, ToolCreate, ToolRead

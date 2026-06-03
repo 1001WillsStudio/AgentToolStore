@@ -175,7 +175,6 @@ def patch_mcp_server(server_id: str, body: dict) -> dict:
         old_mode = srv.get("mode", "toolset")
         srv["mode"] = new_mode
         updated["mode"] = new_mode
-        prefix = f"mcp:{server_id}"
         if new_mode == "toolset" and old_mode != "toolset":
             for tn, ti in srv.get("tools", {}).items():
                 if isinstance(ti, dict):
@@ -189,7 +188,6 @@ def patch_mcp_server(server_id: str, body: dict) -> dict:
     if "exposure" in body:
         srv["exposure"] = body["exposure"]
         updated["exposure"] = body["exposure"]
-        prefix = f"mcp:{server_id}"
         # Only sync tool exposures when mode is "individual"
         if srv.get("mode", "toolset") == "individual":
             synced = 0

@@ -14,10 +14,12 @@ Two separate container models:
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import threading
-import time
 from typing import Dict, Any, Optional, List
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Worker bootstrap (injected into every warm Python container)
@@ -118,6 +120,7 @@ def check_docker_available() -> Optional[str]:
     except FileNotFoundError:
         return "Docker CLI not found."
     except Exception as exc:
+        logger.warning("Docker daemon check failed: %s", exc)
         return f"Cannot communicate with Docker daemon: {exc}"
 
     return None
@@ -133,7 +136,7 @@ def detect_dind() -> bool:
             if "docker" in fh.read() or "kubepods" in fh.read():
                 return True
     except Exception:
-        pass
+        logger.debug("Failed to read /proc/self/cgroup for dind detection", exc_info=True)
     if os.environ.get("THINKTOOL_DOCKER") == "1":
         return True
     return False
@@ -224,7 +227,7 @@ class WarmContainer:
             try:
                 self.proc.stdin.close()
             except Exception:
-                pass
+                logger.debug("Error closing worker stdin", exc_info=True)
             try:
                 self.proc.terminate()
                 self.proc.wait(timeout=5)
@@ -232,7 +235,7 @@ class WarmContainer:
                 try:
                     self.proc.kill()
                 except Exception:
-                    pass
+                    logger.debug("Error killing worker process", exc_info=True)
             self.proc = None
 
     def is_alive(self) -> bool:
@@ -319,6 +322,7 @@ class WarmContainer:
             try:
                 result[0] = self.proc.stdout.readline()  # type: ignore[union-attr]
             except Exception:
+                logger.debug("Error reading from worker stdout", exc_info=True)
                 result[0] = None
 
         t = threading.Thread(target=_target, daemon=True)
@@ -358,7 +362,7 @@ def get_worker() -> WarmContainer:
         cfg.load()
         image = cfg.get_default_docker_image()
 
-        name = f"ts_worker"
+        name = "ts_worker"
         _worker = WarmContainer(image, name)
         _worker.start()
         return _worker

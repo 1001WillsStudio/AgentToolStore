@@ -14,8 +14,6 @@ import base64
 import importlib.util
 import json
 import logging
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -23,7 +21,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from toolstore.config_manager import ConfigManager
 from toolstore.exec_tools import execute_tool, _execute_mcp
 from toolstore.index_manager import IndexManager
-from toolstore.schema_converter import toolstore_to_openai, tool_fn_to_openai
+from toolstore.schema_converter import toolstore_to_openai, tool_fn_to_openai, mcp_to_openai
 from toolstore.skill_manager import get_skill_manager
 from toolstore.tool import Tool, _read_doc
 from toolstore.toolset import clear_registry, get_tool_names as _gn, get_tool
@@ -171,7 +169,8 @@ def _do_info(tool_name: str) -> str:
     # ── Check if tool_name is an MCP server (by id or display_name) ──
     mcp_tools: dict[str, dict] = {}
     srv_info: dict = {}
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     _mcp_servers = im._local_mcp
     servers = im._local_mcp  # alias for server lookup below
     if isinstance(_mcp_servers, dict) and tool_name in _mcp_servers:
@@ -278,7 +277,8 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
 
     # ── MCP servers (grouped toolsets) ──────────────────────────────
     mcp_tools_by_server: dict[str, list[str]] = {}
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     _mcp_servers2 = im._local_mcp
     if isinstance(_mcp_servers2, dict):
         for _sid, _srv in _mcp_servers2.items():
@@ -335,7 +335,8 @@ def get_secondary_tool_names() -> list[str]:
     Always reloads config from disk so tools registered by external
     processes (e.g. the management UI) are visible immediately.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
 
     names: list[str] = []
     mcp_servers: dict[str, str] = {}  # display_name → server_id
@@ -393,7 +394,8 @@ def _iter_individual_tools():
 
     Reads from :class:`IndexManager` (``local_registry.json``).
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     # MCP tools
     for sid, srv in im._local_mcp.items():
         if not isinstance(srv, dict):
@@ -420,7 +422,6 @@ _NATIVE_NAMES: set[str] = {
 }
 
 # ── Re‑import mcp_to_openai for use in get_primary_tool_schemas ──
-from toolstore.schema_converter import mcp_to_openai
 
 
 def _primary_log():
@@ -437,7 +438,8 @@ def get_primary_tool_names() -> list[str]:
 
     Always reloads config from disk.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     names: list[str] = []
 
     for info in im._local_tools.values():
@@ -481,7 +483,8 @@ def get_primary_tool_schemas() -> list[dict]:
     Tools whose names collide with native AuroraCoder tools are skipped
     with a warning.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     schemas: list[dict] = []
     seen: set[str] = set()
 
@@ -617,7 +620,8 @@ def get_primary_tool_prompt() -> str:
     Returns an empty string when no primary tools are configured.
     """
 
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     blocks: list[str] = []
 
     toolsets = im._local_tools
@@ -694,7 +698,8 @@ def _find_primary_toolset(name: str) -> Optional[Tuple[str, dict]]:
 
     Returns ``(toolset_name, toolset_info_dict)`` or ``None``.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     toolsets = im._local_tools
     if isinstance(toolsets, dict):
         for ts_name, ts_info in toolsets.items():
@@ -758,7 +763,8 @@ def _find_primary_mcp_tool(name: str) -> Optional[Dict[str, Any]]:
     Returns a minimal tool dict (with ``mcp_server``) that
     :func:`_execute_mcp` can consume, or ``None``.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     servers = im._local_mcp
     if not isinstance(servers, dict):
         return None

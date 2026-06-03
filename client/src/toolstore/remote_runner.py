@@ -239,7 +239,7 @@ class RemoteRunner:
     def _write_startup_script(self, tmp: Path, requirements: str) -> None:
         """Write a startup.sh that pip-installs requirements then runs the
         Python runner."""
-        script = f'''#!/bin/bash
+        script = '''#!/bin/bash
 set -e
 pip install -q --no-cache-dir -r /code/requirements.txt > /dev/null 2>&1
 exec python /code/runner.py

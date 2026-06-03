@@ -6,7 +6,7 @@ OpenAI function-calling schemas, and MCP tool schemas (JSON Schema).
 from __future__ import annotations
 
 import json
-from typing import Callable, Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List
 
 from toolstore.toolset import generate_definition
 

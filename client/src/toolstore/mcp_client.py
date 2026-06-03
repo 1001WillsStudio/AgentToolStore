@@ -13,10 +13,12 @@ Supports:
 
 from __future__ import annotations
 
-import json
+import logging
 import queue
 import threading
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from toolstore.transport import create_transport, MCPTransport
 from toolstore.schema_converter import flatten_mcp_content
@@ -150,7 +152,7 @@ class FullMCPClient:
                     try:
                         cb(method_name, params)
                     except Exception:
-                        pass
+                        logger.debug("Notification callback error", exc_info=True)
             # else: stale response for another caller — discard
 
     def _send_notification(self, method: str, params: Any = None) -> None:
@@ -177,6 +179,7 @@ class FullMCPClient:
             try:
                 msg = self._transport.receive()
             except Exception:
+                logger.debug("Transport receive error in listener", exc_info=True)
                 if self._listener_running:
                     continue
                 break
@@ -283,19 +286,20 @@ def get_client(server_name: str, config: Dict[str, Any]) -> FullMCPClient:
             try:
                 client.disconnect()
             except Exception:
-                pass
+                logger.debug("Error disconnecting pooled client", exc_info=True)
+        _connection_pool.pop(server_name, None)
         client = FullMCPClient(server_name, config)
         client.connect()
         _connection_pool[server_name] = client
         return client
 
 
-def disconnect_all() -> None:
+def disconnect_all():
     """Disconnect all pooled clients."""
     with _pool_lock:
         for name, client in list(_connection_pool.items()):
             try:
                 client.disconnect()
             except Exception:
-                pass
+                logger.debug("Error disconnecting client '%s'", name, exc_info=True)
         _connection_pool.clear()

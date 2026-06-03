@@ -19,10 +19,10 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable
 
 from toolstore.schema_converter import (
-    toolstore_to_mcp, flatten_mcp_content, bulk_to_openai
+    toolstore_to_mcp
 )
 from toolstore.skill_manager import get_skill_manager
 

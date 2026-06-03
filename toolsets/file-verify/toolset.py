@@ -8,7 +8,6 @@ All functions take a filepath and return a structured result dict.
 
 import csv
 import hashlib
-import io
 import json
 from pathlib import Path
 

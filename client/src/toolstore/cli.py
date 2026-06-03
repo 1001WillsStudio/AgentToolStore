@@ -1,6 +1,4 @@
-import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -87,7 +85,7 @@ def update():
              index_manager.update_from_remote(remote_tools)
              console.print(f"[green]OK: Downloaded {len(remote_tools)} tools from registry[/green]")
         else:
-             console.print(f"[red]Error:[/red] Registry returned unexpected format (expected list)")
+             console.print("[red]Error:[/red] Registry returned unexpected format (expected list)")
              
     except Exception as e:
         console.print(f"[red]Failed to download index:[/red] {e}")
@@ -370,11 +368,11 @@ def delete(
         response = httpx.delete(delete_url, headers=headers)
         
         if response.status_code == 200:
-            console.print(f"[bold green]Success![/bold green] Tool deleted.")
+            console.print("[bold green]Success![/bold green] Tool deleted.")
         elif response.status_code == 404:
             console.print(f"[red]Tool '{tool_name}' not found.[/red]")
         elif response.status_code == 403:
-             console.print(f"[red]Permission denied: You do not own this tool.[/red]")
+             console.print("[red]Permission denied: You do not own this tool.[/red]")
         elif response.status_code == 401:
             console.print("[red]Unauthorized. Please login again.[/red]")
         else:
@@ -650,7 +648,6 @@ def _publish_one_skill(
     skill_dir: Path, registry_url: str, token: str, base_url: str
 ) -> tuple[bool, str]:
     """Publish a single skill to the registry. Returns (ok, message)."""
-    import json
     import httpx
 
     sd = SkillDefinition(skill_dir)
@@ -703,7 +700,6 @@ def skill_publish(
         toolstore skill publish ./skills-general/skills --batch
         toolstore skill publish ./skills-general/skills --batch --yes
     """
-    import json
     import httpx
     from pathlib import Path
 
@@ -792,7 +788,7 @@ def skill_publish(
 
     sd = SkillDefinition(skill_dir)
     if not sd.load():
-        console.print(f"[red]✗ Skill validation failed:[/red]")
+        console.print("[red]✗ Skill validation failed:[/red]")
         for err in sd.errors:
             console.print(f"  [red]• {err}[/red]")
         raise typer.Exit(1)
@@ -1021,7 +1017,6 @@ def toolset_publish(
     path: str = typer.Argument(..., help="Path to toolset directory"),
 ):
     """Publish a toolset to the ToolStore registry."""
-    import json
     import httpx
     from pathlib import Path
 
@@ -1032,7 +1027,7 @@ def toolset_publish(
 
     td = ToolsetDefinition(toolset_dir)
     if not td.load():
-        console.print(f"[red]✗ Toolset validation failed:[/red]")
+        console.print("[red]✗ Toolset validation failed:[/red]")
         for err in td.errors:
             console.print(f"  [red]• {err}[/red]")
         raise typer.Exit(1)
@@ -1172,7 +1167,7 @@ def serve(
     # Ensure skills are loaded
     sm = get_skill_manager(config_manager.get_skill_dirs())
     if config_manager.get_skill_dirs():
-        console.print(f"[blue]Scanning skills...[/blue]")
+        console.print("[blue]Scanning skills...[/blue]")
         skills = sm.scan()
         if skills:
             index_manager.update_local_skills(sm.to_tool_definitions())
@@ -1181,7 +1176,7 @@ def serve(
     # Ensure local toolsets are loaded (in-memory only)
     tm = get_toolset_manager(config_manager.get_toolset_dirs())
     if config_manager.get_toolset_dirs():
-        console.print(f"[blue]Scanning toolsets...[/blue]")
+        console.print("[blue]Scanning toolsets...[/blue]")
         tcount = tm.scan()
         if tcount:
             index_manager.discover_local_toolsets(config_manager.get_toolset_dirs())
@@ -1216,7 +1211,7 @@ def serve(
                 q: asyncio.Queue = asyncio.Queue()
                 sse_queues.append(q)
                 try:
-                    yield f"event: endpoint\ndata: /message\n\n"
+                    yield "event: endpoint\ndata: /message\n\n"
                     while True:
                         if await request.is_disconnected():
                             break
@@ -1297,9 +1292,9 @@ def mcp_server_add_docker(
             )
     elif mode == "none":
         console.print(
-            f"[yellow]Warning:[/yellow] Custom Docker images are blocked "
-            f"(approval mode is 'none').\n"
-            f"Use 'toolstore docker mode list' or 'toolstore docker mode all' to allow."
+            "[yellow]Warning:[/yellow] Custom Docker images are blocked "
+            "(approval mode is 'none').\n"
+            "Use 'toolstore docker mode list' or 'toolstore docker mode all' to allow."
         )
 
     entrypoint_parts = entrypoint.split()
@@ -1369,7 +1364,7 @@ def mcp_server_list():
             cmd = cfg.get("command", "?")
             args_str = ' '.join(cfg.get("args", []))
             console.print(f"  [cyan]{sname}[/cyan]  (stdio)\n    {cmd} {args_str}")
-    console.print(f"\nRun 'toolstore update' to scan for tools.")
+    console.print("\nRun 'toolstore update' to scan for tools.")
 
 
 # Note: search/install/publish commands have been removed.

@@ -8,8 +8,6 @@ but currently need throw‑away scripts for.
 
 import difflib
 import re
-import math
-from typing import Any
 
 try:
     from toolstore.toolset import tool
@@ -47,8 +45,8 @@ def text_diff(*, original: str, modified: str,
         a, b, fromfile=label_a, tofile=label_b, n=context_lines
     ))
 
-    added = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+    added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
 
     return {
         "diff": "".join(diff_lines) if diff_lines else "",

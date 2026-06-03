@@ -10,7 +10,7 @@ from app.database import get_session
 from app.models import User
 
 # Configuration
-SECRET_KEY = "super-secret-key-change-this-in-production"
+SECRET_KEY = os.environ.get("TOOLSTORE_SECRET_KEY", "super-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
