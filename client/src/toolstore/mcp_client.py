@@ -18,10 +18,10 @@ import queue
 import threading
 from typing import Dict, Any, Optional
 
-logger = logging.getLogger(__name__)
-
 from toolstore.transport import create_transport, MCPTransport
 from toolstore.schema_converter import flatten_mcp_content
+
+logger = logging.getLogger(__name__)
 
 
 class FullMCPClient:

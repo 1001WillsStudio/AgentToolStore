@@ -864,7 +864,8 @@ def _resolve_mcp_toolset(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]
     or the raw server id (e.g. "echo-server").  The ``function`` argument
     selects which individual MCP tool to execute.
     """
-    im = _get_im(); im._load_local()
+    im = _get_im()
+    im._load_local()
     servers = im._local_mcp
     if not isinstance(servers, dict):
         return None
