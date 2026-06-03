@@ -958,7 +958,7 @@ def toolset_show(
         params = fn_info.get("parameters", {})
         param_strs = []
         for pname, pinfo in params.items():
-            req = "" if not pinfo.get("required") else ""
+            "" if not pinfo.get("required") else ""
             param_strs.append(f"{pname}")
         sig = f"{fn_name}({', '.join(param_strs)})"
         console.print(f"  [cyan]{sig}[/cyan]")
