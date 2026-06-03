@@ -8,7 +8,6 @@ commands attached directly to the root group.
 from __future__ import annotations
 
 import json
-import sys
 import base64
 import tempfile
 from pathlib import Path
@@ -22,7 +21,7 @@ from rich.syntax import Syntax
 from toolstore import __version__
 from toolstore.config_manager import ConfigManager
 from toolstore.index_manager import IndexManager
-from toolstore.skill_manager import SkillDefinition, get_skill_manager
+from toolstore.skill_manager import get_skill_manager
 from toolstore.toolset_manager import ToolsetDefinition, get_toolset_manager
 
 console = Console()
