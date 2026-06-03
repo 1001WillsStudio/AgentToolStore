@@ -447,11 +447,14 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), ses
 @app.get("/index.json")
 def get_index(session: Session = Depends(get_session)):
     """
-    Returns the full list of published toolsets in JSON format.
+    Returns the full list of published toolsets in the stable dict format.
+
+    Format: ``{"meta": {...}, "tools": {...}}`` — same shape as
+    ``/online_index`` so the file on disk is always consistent.
     """
     tools = session.exec(select(Tool)).all()
-    
-    index_list = []
+
+    index_tools: dict[str, dict] = {}
     for tool in tools:
         tool_data = tool.definition.copy()
         tool_data["name"] = tool.name
@@ -472,9 +475,16 @@ def get_index(session: Session = Depends(get_session)):
                 tool_data["env_vars"] = tool.env_vars
             if tool.requirements:
                 tool_data["requirements"] = tool.requirements
-        index_list.append(tool_data)
-        
-    return index_list
+        index_tools[tool.name] = tool_data
+
+    return {
+        "meta": {
+            "version": "1.0",
+            "count": len(tools),
+            "last_updated": datetime.utcnow().isoformat(),
+        },
+        "tools": index_tools,
+    }
 
 @app.post("/publish")
 def publish_tool(

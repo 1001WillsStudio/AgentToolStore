@@ -36,8 +36,24 @@ class IndexManager:
         if self.registry_file.exists():
             try:
                 with open(self.registry_file, "r", encoding="utf-8") as f:
-                    self.index_data = json.load(f)
+                    raw = json.load(f)
             except json.JSONDecodeError:
+                raw = None
+
+            # Robustness: the file may be a JSON array (raw server response)
+            # rather than the expected {"meta":{...}, "tools":{...}} dict.
+            if isinstance(raw, list):
+                # Convert array format → dict format
+                tools = {}
+                for tool in raw:
+                    name = tool.get("name")
+                    if name:
+                        tool.setdefault("source", "public")
+                        tools[name] = tool
+                self.index_data = {"meta": {"count": len(tools)}, "tools": tools}
+            elif isinstance(raw, dict):
+                self.index_data = raw
+            else:
                 self.index_data = {"meta": {}, "tools": {}}
 
         self._load_local()
@@ -71,17 +87,41 @@ class IndexManager:
     # Tool management
     # ----------------------------------------------------------------
 
-    def update_from_remote(self, remote_data: List[Dict[str, Any]]):
+    def update_from_remote(self, remote_data):
         """Replace the online registry with freshly fetched remote data.
 
-        This is the **only** place that writes to ``online_registry.json``.
+        **Accepts two stable formats:**
+
+        * **List** ``[{name:...,...}, ...]`` — legacy server format
+        * **Dict** ``{"meta":{...}, "tools":{...}}`` — current server format
+
+        This is the **only** place that writes to ``online_registry.json``
+        — the file is always saved in the stable dict format.
         """
         self.index_data["tools"].clear()
-        for tool in remote_data:
-            name = tool.get("name")
-            if name:
-                tool.setdefault("source", "public")
-                self.index_data["tools"][name] = tool
+
+        if isinstance(remote_data, list):
+            # Legacy server format (bare array)
+            for tool in remote_data:
+                name = tool.get("name")
+                if name:
+                    tool.setdefault("source", "public")
+                    self.index_data["tools"][name] = tool
+        elif isinstance(remote_data, dict):
+            # Current server format ({"tools": {...}})
+            incoming_tools = remote_data.get("tools", {})
+            for name, tool in incoming_tools.items():
+                if isinstance(tool, dict):
+                    tool.setdefault("source", "public")
+                    self.index_data["tools"][name] = tool
+            # Preserve any meta the server sent
+            if "meta" in remote_data:
+                self.index_data["meta"].update(remote_data["meta"])
+        else:
+            logger.warning(
+                "update_from_remote: unexpected type %s — ignoring",
+                type(remote_data).__name__,
+            )
 
         self.index_data["meta"]["last_updated"] = datetime.now(
             timezone.utc).isoformat()

@@ -61,32 +61,36 @@ def update():
     Download the latest public tool index and scan local MCP servers.
     """
     console.print("[bold blue]Updating ToolStore index...[/bold blue]")
-    
+
     # Download from registry
     import httpx
     registry_url = config_manager.get_registry_url()
     console.print(f"Fetching index from: {registry_url}")
-    
+
     try:
         response = httpx.get(registry_url)
         response.raise_for_status()
-        remote_tools = response.json()
-        
-        # Validate it's a list
-        if not isinstance(remote_tools, list):
-             # Fallback if wrapped in object (like server's /online_index return format might change)
-            if isinstance(remote_tools, dict) and "tools" in remote_tools:
-                 # If it's a dict like {"tools": {...}} convert to list if needed, 
-                 # but IndexManager.update_from_remote expects a list of tool dicts.
-                 # Let's check server/app/main.py: get_index returns List[dict].
-                 pass
-        
-        if isinstance(remote_tools, list):
-             index_manager.update_from_remote(remote_tools)
-             console.print(f"[green]OK: Downloaded {len(remote_tools)} tools from registry[/green]")
+        remote_data = response.json()
+
+        # The server returns the stable dict format {"tools": {...}}
+        # but older servers returned a bare list [{...}].
+        # ``update_from_remote`` handles both transparently.
+        if isinstance(remote_data, (list, dict)):
+            index_manager.update_from_remote(remote_data)
+            tool_count = (
+                len(remote_data.get("tools", {}))
+                if isinstance(remote_data, dict)
+                else len(remote_data)
+            )
+            console.print(
+                f"[green]OK: Downloaded {tool_count} tools from registry[/green]"
+            )
         else:
-             console.print("[red]Error:[/red] Registry returned unexpected format (expected list)")
-             
+            console.print(
+                "[red]Error:[/red] Registry returned unexpected format "
+                f"(type {type(remote_data).__name__})"
+            )
+
     except Exception as e:
         console.print(f"[red]Failed to download index:[/red] {e}")
         console.print("Using cached index if available.")
