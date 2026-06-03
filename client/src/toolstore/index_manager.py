@@ -42,6 +42,18 @@ class IndexManager:
 
         self._load_local()
 
+    def reload(self) -> None:
+        """Re-read local state from disk (skills, toolsets, MCP servers).
+
+        Call this after external modifications (e.g. WebUI) to ensure the
+        in-memory cache reflects the latest disk state.
+        """
+        self._load_local()
+
+    def reload_all(self) -> None:
+        """Re-read remote registry AND local state from disk."""
+        self.load()
+
     def save(self):
         """Save current in-memory registry to disk."""
         with open(self.registry_file, "w", encoding="utf-8") as f:
