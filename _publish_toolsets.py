@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Publish ALL toolsets to the ToolStore registry."""
-import sys, json, requests
+import os
+import sys
+import requests
 sys.path.insert(0, 'client/src')
 from toolstore.toolset_manager import ToolsetDefinition
 from pathlib import Path
 
-BASE = "https://mrw33554432-agenttoolstore.hf.space"
-resp = requests.post(f"{BASE}/auth/register", json={"username": "pub_all", "password": "all999"})
+BASE = os.environ.get("TOOLSTORE_REGISTRY_URL", "https://mrw33554432-agenttoolstore.hf.space")
+REGISTRY_USER = os.environ.get("TOOLSTORE_REGISTRY_USER", "pub_all")
+REGISTRY_PASSWORD = os.environ.get("TOOLSTORE_REGISTRY_PASSWORD", "all999")
+resp = requests.post(f"{BASE}/auth/register", json={"username": REGISTRY_USER, "password": REGISTRY_PASSWORD})
 TOKEN = resp.json()["access_token"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
@@ -45,7 +49,7 @@ for name in ALL:
         else:
             detail = str(result.get("detail", ""))[:60]
             print(f"⚠️ {name}: {detail}")
-    except Exception:
-        print(f"❌ {name}: empty ({resp.status_code})")
+    except Exception as exc:
+        print(f"❌ {name}: error parsing response ({resp.status_code}): {exc}")
 
 print(f"\nDone: {ok} published")

@@ -11,18 +11,19 @@ Skills API handlers.
 from __future__ import annotations
 
 import base64
-import json
 import shutil
 import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
 from ..config_manager import ConfigManager
-from ..skill_manager import SkillDefinition, SkillManager, get_skill_manager
+from ..skill_manager import SkillDefinition, get_skill_manager
 from ..skill_discovery import discover_skills
 from .api_helpers import load_config, save_config
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 def list_skills() -> dict:
@@ -137,6 +138,7 @@ def upload_skill(body: dict) -> tuple[dict, int]:
     try:
         zip_data = base64.b64decode(archive_b64)
     except Exception:
+        logger.debug("Suppressed exception in api_skills.py", exc_info=True)
         return {"error": "Invalid base64 data"}, 400
 
     tmp = Path(tempfile.mkdtemp(prefix="toolstore-skill-"))

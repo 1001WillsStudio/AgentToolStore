@@ -15,7 +15,7 @@ import json
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING
 
 from toolstore.index_manager import IndexManager
 from toolstore.mcp_client import get_client
@@ -24,6 +24,9 @@ from toolstore.skill_manager import get_skill_manager
 
 if TYPE_CHECKING:
     from toolstore.config_manager import ConfigManager
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +46,7 @@ def _read_doc(doc_path: Path) -> str:
     try:
         text = doc_path.read_text(encoding="utf-8")
     except Exception:
+        logger.debug("Suppressed exception in tool.py", exc_info=True)
         return ""
 
     lines = text.split("\n")
@@ -280,6 +284,7 @@ class ToolsetTool(Tool):
             try:
                 code = base64.b64decode(self.code_base64).decode("utf-8")
             except Exception as exc:
+                logger.debug("Suppressed exception in tool.py", exc_info=True)
                 return f"Error decoding code_base64: {exc}"
 
         if not code and self.directory:
@@ -320,6 +325,7 @@ class ToolsetTool(Tool):
                 result = fn(**kwargs)
                 return json.dumps(result, default=str, indent=2)
             except Exception as exc:
+                logger.debug("Suppressed exception in tool.py", exc_info=True)
                 return f"Error executing '{function_name}': {exc}"
 
     # ── format_display ────────────────────────────────────────────
@@ -407,6 +413,7 @@ class MCPTool(Tool):
                 return "[TOOL ERROR] " + flatten_mcp_content(content)
             return flatten_mcp_content(content)
         except Exception as exc:
+            logger.debug("Suppressed exception in tool.py", exc_info=True)
             return f"Error executing MCP tool: {str(exc)}"
 
     # ── format_display ────────────────────────────────────────────

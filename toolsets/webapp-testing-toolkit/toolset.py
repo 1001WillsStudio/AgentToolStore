@@ -1,7 +1,6 @@
 """webapp-testing-toolkit — URL checking and basic HTTP diagnostics.
 ===================================================================="""
 
-from pathlib import Path
 
 try:
     from toolstore.toolset import tool
@@ -20,7 +19,9 @@ def check_url(*, url: str) -> dict:
     Returns:
         dict with: url, status_code, reachable, content_type, redirect_url, latency_ms
     """
-    import urllib.request, urllib.error, time
+    import urllib.request
+    import urllib.error
+    import time
     try:
         start = time.monotonic()
         req = urllib.request.Request(url, method='HEAD',

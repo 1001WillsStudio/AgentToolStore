@@ -18,16 +18,12 @@ import urllib.parse
 from urllib.request import urlopen
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from typing import Any
 
 # ── API handlers (sibling subpackage, core never imports webui) ──────
 from ..management.api_helpers import (
     disconnect_all_clients,
-    disconnect_server,
     _config_manager,
     _index_manager,
-    load_config as api_load_config,
-    save_config as api_save_config,
     connect_and_discover as api_connect_and_discover,
 )
 from ..management import api_mcp
@@ -48,6 +44,9 @@ import shutil
 from io import BytesIO
 import uuid
 import subprocess
+
+import logging
+logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -229,6 +228,7 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             body = self._body()
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({"error": "Invalid JSON body"}, 400)
 
         archive_b64 = body.get("archive", "")
@@ -237,6 +237,7 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             zip_data = base64.b64decode(archive_b64)
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({"error": "Invalid base64 data"}, 400)
 
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-skill-"))
@@ -285,6 +286,7 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             body = self._body()
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({"error": "Invalid JSON body"}, 400)
 
         archive_b64 = body.get("archive", "")
@@ -293,6 +295,7 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             zip_data = base64.b64decode(archive_b64)
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({"error": "Invalid base64 data"}, 400)
 
         tmp = Path(tempfile.mkdtemp(prefix="toolstore-toolset-"))
@@ -473,10 +476,12 @@ class _Handler(SimpleHTTPRequestHandler):
                     ip.parent.mkdir(parents=True, exist_ok=True)
                     ip.write_text(raw, encoding="utf-8")
             except Exception:
+                logger.debug("Suppressed exception in server.py", exc_info=True)
                 return self._json({})
         try:
             data = json.loads(ip.read_text())
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({})
 
         im = IndexManager()
@@ -530,6 +535,7 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             data = json.loads(ip.read_text())
         except Exception:
+            logger.debug("Suppressed exception in server.py", exc_info=True)
             return self._json({"error": "Failed to read registry index"}, 500)
         if isinstance(data, list):
             tdef = next((t for t in data if isinstance(t, dict) and t.get("name") == name), None)
@@ -679,7 +685,7 @@ class _Handler(SimpleHTTPRequestHandler):
                     "description": si.get("description", "")}
 
         # Registry toolsets (online_registry.json — unchanged)
-        cm = _config_manager()
+        _config_manager()
         ip = _config_manager().config_dir / "online_registry.json"
         if ip.exists():
             try:
@@ -706,6 +712,7 @@ class _Handler(SimpleHTTPRequestHandler):
                             "parallel_safe": False, "subagent_safe": False,
                             "description": tdef.get("description", "")}
             except Exception:
+                logger.debug("Suppressed exception in server.py", exc_info=True)
                 pass
 
         # Local toolsets (from local_registry.json)

@@ -30,10 +30,11 @@ type hints and docstrings, no manual JSON needed.
 from __future__ import annotations
 
 import inspect
-import json
 import re
-from pathlib import Path
 from typing import Any, Callable, get_type_hints
+
+import logging
+logger = logging.getLogger(__name__)
 
 # Per‑module registry — cleared before each toolset load.
 _REGISTRY: dict[str, Callable[..., Any]] = {}
@@ -168,6 +169,7 @@ def _safe_get_type_hints(fn: Callable[..., Any]) -> dict[str, type]:
     try:
         return get_type_hints(fn)
     except Exception:
+        logger.debug("Suppressed exception in toolset.py", exc_info=True)
         return fn.__annotations__ or {}
 
 

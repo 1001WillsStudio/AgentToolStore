@@ -152,7 +152,7 @@ class ToolsetDefinition:
 
         for i, arg_name in enumerate(all_arg_names):
             ann = all_annotations.get(arg_name)
-            has_default = defaults[i] is not None  # None could be a real default
+            defaults[i] is not None  # None could be a real default
 
             param_type = "string"
             if ann:
@@ -301,7 +301,7 @@ class ToolsetManager:
                 if existing is not None:
                     # Quick check: has doc.md been modified?
                     try:
-                        mtime = doc_path.stat().st_mtime
+                        doc_path.stat().st_mtime
                     except OSError:
                         continue
                     # We can't easily track mtimes of loaded definitions,

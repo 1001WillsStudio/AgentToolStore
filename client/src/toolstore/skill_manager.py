@@ -16,9 +16,12 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from toolstore.config_manager import _DOCKER_PERSISTENT_DIR
+
+if TYPE_CHECKING:
+    from toolstore.skill_discovery import DiscoveryResult
 
 
 # ---------------------------------------------------------------------------

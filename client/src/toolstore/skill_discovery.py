@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List
 
 if TYPE_CHECKING:
     from toolstore.skill_manager import SkillDefinition
@@ -139,7 +139,7 @@ class DiscoveryResult:
 
     def report(self) -> str:
         """Full report with validation details and error messages."""
-        parts = [f"## Skill Discovery Report", f"", f"Scan root: `{self.root_path}`", f""]
+        parts = ["## Skill Discovery Report", "", f"Scan root: `{self.root_path}`", ""]
         parts.append(f"**{self.summary()}**")
         parts.append("")
 

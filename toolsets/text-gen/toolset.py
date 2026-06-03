@@ -7,7 +7,6 @@ populating templates, and creating demo data without external APIs.
 """
 
 import random
-import string
 
 try:
     from toolstore.toolset import tool

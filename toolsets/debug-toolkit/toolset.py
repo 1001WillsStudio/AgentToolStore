@@ -2,7 +2,6 @@
 ==============================================================="""
 
 import re
-from pathlib import Path
 
 try:
     from toolstore.toolset import tool

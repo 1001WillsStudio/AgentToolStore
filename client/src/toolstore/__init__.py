@@ -1,6 +1,6 @@
 """ToolStore - Universal tool manager for AI agents."""
 
-__version__ = "2.1.6"
+__version__ = "2.1.7"
 
 from .native_tool import (
     get_secondary_tool_names,

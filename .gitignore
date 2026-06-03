@@ -11,6 +11,10 @@ database_backup.db
 .venv/
 env/
 .DS_Store
+*.log
+.env
+.env.local
+.env.*.local
 *.egg
 .pytest_cache/
 .idea/

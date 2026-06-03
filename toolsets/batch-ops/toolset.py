@@ -6,7 +6,6 @@ Pure‑stdlib utilities for batch processing files and directories —
 the repetitive tasks agents do across multiple files.
 """
 
-import os
 import re
 import shutil
 from pathlib import Path

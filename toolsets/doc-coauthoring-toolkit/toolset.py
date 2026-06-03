@@ -1,7 +1,6 @@
 """doc-coauthoring-toolkit — Document structure outlines and templates.
 ======================================================================"""
 
-from pathlib import Path
 
 try:
     from toolstore.toolset import tool
@@ -73,7 +72,7 @@ import package
 
 MIT
 """,
-        "changelog": f"""# Changelog
+        "changelog": """# Changelog
 
 ## [Unreleased]
 
@@ -86,7 +85,7 @@ MIT
 ### Fixed
 - 
 
-## [1.0.0] - {{{{date}}}}
+## [1.0.0] - {{date}}
 - Initial release
 """,
         "contributing": f"""# Contributing to {title or 'Project'}

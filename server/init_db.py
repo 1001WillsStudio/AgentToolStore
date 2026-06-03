@@ -1,3 +1,4 @@
+import os
 from sqlmodel import Session, select
 from app.database import engine, create_db_and_tables
 from app.models import User
@@ -14,7 +15,7 @@ def init_db():
             system_user = User(
                 username="system",
                 email="admin@toolstore.local",
-                password_hash=get_password_hash("system_password_change_me")
+                password_hash=get_password_hash(os.environ.get("TOOLSTORE_SYSTEM_PASSWORD", "system_password_change_me"))
             )
             session.add(system_user)
             session.commit()

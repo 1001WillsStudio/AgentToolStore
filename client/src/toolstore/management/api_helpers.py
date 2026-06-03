@@ -8,7 +8,6 @@ Consolidates all MCP / Skill / Toolset state into
 """
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
@@ -20,6 +19,9 @@ from typing import Any
 from ..config_manager import ConfigManager
 from ..index_manager import IndexManager
 from ..mcp_client import FullMCPClient
+
+import logging
+logger = logging.getLogger(__name__)
 
 _SPA_MCP_KEY = "mcp_servers"
 _CLI_MCP_KEY = "mcpServers"
@@ -190,9 +192,13 @@ def shutdown_mcp_process(server_id: str) -> None:
         return
     try:
         proc.send_signal(signal.SIGTERM)
-        try: proc.wait(timeout=5)
-        except subprocess.TimeoutExpired: proc.kill()
-    except Exception: pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    except Exception:
+        logger.debug("Suppressed exception in api_helpers.py", exc_info=True)
+        pass
 
 
 def disconnect_server(server_id: str) -> None:
@@ -200,8 +206,11 @@ def disconnect_server(server_id: str) -> None:
     with _pool_lock:
         client = _connection_pool.pop(server_id, None)
     if client:
-        try: client.disconnect()
-        except Exception: pass
+        try:
+            client.disconnect()
+        except Exception:
+            logger.debug("Suppressed exception in api_helpers.py", exc_info=True)
+            pass
 
 
 def disconnect_all_clients() -> None:

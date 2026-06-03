@@ -9,14 +9,17 @@ Supports:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 import threading
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +94,7 @@ class StdioTransport(MCPTransport):
                 self._process.terminate()
                 self._process.wait(timeout=5)
             except Exception:
+                logger.debug("StdioTransport: terminate failed, sending kill", exc_info=True)
                 self._process.kill()
             self._process = None
 
@@ -229,6 +233,7 @@ class SSETransport(MCPTransport):
                     # Stream ended normally, reconnect
                     backoff = 0.5
             except Exception:
+                logger.debug("SSE stream error, reconnecting in %.1fs", backoff, exc_info=True)
                 if self._running:
                     threading.Event().wait(backoff)
                     backoff = min(backoff * 2, 30)
@@ -284,7 +289,7 @@ class DockerTransport(MCPTransport):
                 try:
                     self._process.kill()
                 except Exception:
-                    pass
+                    logger.debug("DockerTransport: kill failed", exc_info=True)
             self._process = None
 
     def is_connected(self) -> bool:
