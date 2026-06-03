@@ -845,6 +845,7 @@ class ManagementServer:
         return f"http://{self.host}:{self.port}"
 
     def start(self, blocking: bool = False) -> None:
+        self._prune_stale_entries()
         self._httpd = HTTPServer((self.host, self.port), _Handler)
         if blocking:
             print(f"ToolStore management UI → {self.url}")
@@ -859,6 +860,37 @@ class ManagementServer:
                 target=self._httpd.serve_forever, daemon=True)
             self._thread.start()
             print(f"ToolStore management UI → {self.url}")
+
+    @staticmethod
+    def _prune_stale_entries() -> None:
+        """Remove registry entries whose on-disk directories no longer exist.
+
+        Prevents the mismatch where ``local_registry.json`` references toolsets
+        or skills that were deleted outside the WebUI (e.g. via git rebase,
+        manual deletion, or container restart).
+        """
+        im = IndexManager()
+        im.load()
+        pruned_toolsets = 0
+        pruned_skills = 0
+
+        for name in list(im._local_tools):
+            ts_dir = im._local_tools[name].get("toolset_dir", "")
+            if ts_dir and not Path(ts_dir).exists():
+                del im._local_tools[name]
+                pruned_toolsets += 1
+                logger.info("Pruned stale toolset '%s' (dir %s not found)", name, ts_dir)
+
+        for name in list(im._local_skills):
+            skill_dir = im._local_skills[name].get("skill_dir", "")
+            if skill_dir and not Path(skill_dir).exists():
+                del im._local_skills[name]
+                pruned_skills += 1
+                logger.info("Pruned stale skill '%s' (dir %s not found)", name, skill_dir)
+
+        if pruned_toolsets or pruned_skills:
+            im._save_local()
+            logger.info("Startup prune: %d toolset(s), %d skill(s) removed", pruned_toolsets, pruned_skills)
 
     def stop(self) -> None:
         if self._httpd:
