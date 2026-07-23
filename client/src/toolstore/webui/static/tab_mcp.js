@@ -334,7 +334,7 @@ function normalizeMcpServer(item) {
 }
 
 async function quickConnectMcp() {
-  var textarea = document.getElementById('mcp-quick-text');
+  var textarea = document.getElementById('mcp-paste-json');
   var text = textarea.value.trim();
   if (!text) { toast('Paste MCP server JSON first', 'error'); return; }
 
@@ -377,7 +377,7 @@ async function quickConnectMcp() {
 // Connect MCP button → opens modal
 document.getElementById('btn-connect-mcp').addEventListener('click', function () {
   document.getElementById('form-mcp').reset();
-  document.getElementById('mcp-quick-text').value = '';
+  document.getElementById('mcp-paste-json').value = '';
   switchMcpMode('quick');
   showMcpFields('stdio');
   openModal('modal-mcp');
