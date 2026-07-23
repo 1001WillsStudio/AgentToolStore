@@ -166,48 +166,53 @@ def _do_info(tool_name: str) -> str:
     if not tool_name:
         return "Error: 'tool_name' argument is required for info action."
 
-    # ── Check if tool_name is an MCP server (by id or display_name) ──
-    mcp_tools: dict[str, dict] = {}
-    srv_info: dict = {}
+    # ── Resolve an MCP server by server_id or display_name ──
+    # Note: this branch must succeed even when the server exposes zero
+    # tools (a prompt-only MCP server like ScheduleWake); the old code
+    # gated on "mcp_tools" being non-empty and therefore incorrectly
+    # returned 'not found' for tool-less servers.
     im = _get_im()
     im.reload()
     _mcp_servers = im._local_mcp
-    servers = im._local_mcp  # alias for server lookup below
-    if isinstance(_mcp_servers, dict) and tool_name in _mcp_servers:
-        for _tn, _ti in _mcp_servers[tool_name].get("tools", {}).items():
-            if isinstance(_ti, dict):
-                mcp_tools[_tn] = _ti
 
-    # Try display_name match
-    if not mcp_tools and isinstance(_mcp_servers, dict):
+    def _resolve_mcp(query: str) -> tuple[str, dict] | None:
+        if not isinstance(_mcp_servers, dict):
+            return None
+        # Direct server_id match
+        if query in _mcp_servers and isinstance(_mcp_servers[query], dict):
+            return query, _mcp_servers[query]
+        # display_name match
         for _sid, _srv in _mcp_servers.items():
-            if isinstance(_srv, dict) and _srv.get("display_name") == tool_name:
-                for _tn, _ti in _srv.get("tools", {}).items():
-                    if isinstance(_ti, dict):
-                        mcp_tools[_tn] = _ti
-                if mcp_tools:
-                    srv_info = _srv
-                    break
+            if isinstance(_srv, dict) and _srv.get("display_name") == query:
+                return _sid, _srv
+        return None
 
-    if mcp_tools:
-        # Get server metadata
-        actual_sid = tool_name
-        srv_info = {}
-        if isinstance(servers, dict):
-            for sid, srv in servers.items():
-                prefix2 = f"mcp:{sid}"
-                if any(ti.get("source") == prefix2 for ti in mcp_tools.values() if isinstance(ti, dict)):
-                    actual_sid = sid
-                    srv_info = srv
-                    break
+    resolved = _resolve_mcp(tool_name)
+    # Allow the query to be either the display_name or the server_id;
+    # if the display_name was passed but equals a server_id of another
+    # server, the direct match wins (handled above).
+    if resolved is None and isinstance(_mcp_servers, dict):
+        # also try matching the raw key with slashes normalised
+        alt = tool_name.replace("/", "-") if tool_name else ""
+        if alt and alt != tool_name:
+            resolved = _resolve_mcp(alt)
 
-        functions = []
-        for tname, tinfo in mcp_tools.items():
-            functions.append({
+    if resolved is not None:
+        actual_sid, srv_info = resolved
+        # Collect this server's individual tools (may be empty).
+        mcp_tools = {
+            tname: tinfo
+            for tname, tinfo in srv_info.get("tools", {}).items()
+            if isinstance(tinfo, dict)
+        }
+        functions = [
+            {
                 "name": tname,
                 "description": tinfo.get("description", ""),
                 "exposure": tinfo.get("exposure", "secondary"),
-            })
+            }
+            for tname, tinfo in mcp_tools.items()
+        ]
         return json.dumps({
             "name": srv_info.get("display_name") or actual_sid,
             "server_id": actual_sid,

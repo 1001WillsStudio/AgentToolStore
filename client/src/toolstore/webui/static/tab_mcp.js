@@ -292,39 +292,40 @@ function parseMcpServersJson(text) {
     Object.keys(parsed.mcpServers).forEach(function (key) {
       var item = parsed.mcpServers[key];
       if (item && typeof item === 'object') {
-        out = out.concat(normalizeMcpServer(item));
+        out = out.concat(normalizeMcpServer(item, key));
       }
     });
     return out;
   } catch (_) { return []; }
 }
 
-function normalizeMcpServer(item) {
-  // Handle GitHub-style entries: { "owner/repo": { "transport": "stdio", ... } }
-  // The key becomes the server_id (replacing / with -) if no 'name' field is provided.
+function normalizeMcpServer(item, key) {
+  // Handle GitHub-style nested entries: { "owner/repo": { "transport": "stdio", ... } }.
+  // The parent key (the Claude Desktop "mcpServers" key, or a GitHub
+  // "owner/repo") is the natural identifier — carry it through so the
+  // caller-provided key wins over the 'mcp-<timestamp>' fallback.
   if (item && typeof item === 'object' && !Array.isArray(item)) {
     var result = {};
-    Object.keys(item).forEach(function (key) {
-      var val = item[key];
+    Object.keys(item).forEach(function (k) {
+      var val = item[k];
       if (val && typeof val === 'object' && !Array.isArray(val) && (val.transport || val.command || val.url)) {
-        var cfg = Object.assign({}, val);
-        cfg.server_id = cfg.server_id || cfg.name || key.replace(/\//g, '-');
-        result[cfg.server_id] = cfg;
-      } else if (key === 'transport' || key === 'command' || key === 'url') {
-        result[key] = val;
+        var sub = Object.assign({}, val);
+        sub.server_id = sub.server_id || sub.name || (key ? key.replace(/\//g, '-') : undefined) || 'mcp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        result[sub.server_id] = sub;
+      } else if (k === 'transport' || k === 'command' || k === 'url') {
+        result[k] = val;
       }
     });
-    // If we detected sub-objects, return them as array
     var subIds = Object.keys(result).filter(function (k) {
       return result[k] && typeof result[k] === 'object' && !Array.isArray(result[k]) && (result[k].transport || result[k].command);
     });
-    if (subIds.length > 0) {
-      return subIds.map(function (k) { return result[k]; });
-    }
-    // Single server: use item directly if it has transport fields
+    if (subIds.length > 0) { return subIds.map(function (k) { return result[k]; }); }
+    // Single server matching the outer key.
     if (item.transport || item.command || item.url) {
       var cfg = Object.assign({}, item);
-      cfg.server_id = cfg.server_id || cfg.name || 'mcp-' + Date.now();
+      cfg.server_id = cfg.server_id || cfg.name || (key ? key.replace(/\//g, '-') : undefined) || 'mcp-' + Date.now();
+      // Preserve the outer JSON key as display_name when not otherwise set.
+      if (key && !cfg.display_name) cfg.display_name = key;
       return [cfg];
     }
   } else if (Array.isArray(item)) {
