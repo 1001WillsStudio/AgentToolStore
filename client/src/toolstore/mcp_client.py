@@ -49,6 +49,7 @@ class FullMCPClient:
         self._request_id = 0
         self._lock = threading.Lock()
         self._capabilities: Dict[str, Any] = {}
+        self._instructions: str = ""
         self._connected = False
         # Shared message queue — listener pushes, _call pops
         self._msg_queue: queue.Queue = queue.Queue()
@@ -99,7 +100,20 @@ class FullMCPClient:
             "clientInfo": {"name": "toolstore", "version": "2.0.0"},
         })
         self._capabilities = init_result.get("capabilities", {})
+        # The server's ``instructions`` field carries the human/agent-readable
+        # description of what the server is for.  It is the canonical source
+        # for the description surfaced to the agent — written by the server
+        # author, not auto-generated.
+        self._instructions = init_result.get("instructions", "") or ""
         self._send_notification("notifications/initialized")
+
+    def get_instructions(self) -> str:
+        """Return the server description from the MCP handshake.
+
+        This is the text the server author put in ``initialize().instructions``
+        — the authoritative description surfaced to the agent.
+        """
+        return self._instructions
 
     # ------------------------------------------------------------------
     # JSON-RPC primitives

@@ -213,7 +213,7 @@ def _do_info(tool_name: str) -> str:
             "server_id": actual_sid,
             "type": "mcp_toolset",
             "exposure": srv_info.get("exposure", "secondary") if isinstance(srv_info, dict) else "secondary",
-            "description": "MCP server",
+            "description": srv_info.get("description", ""),
             "functions": functions,
         }, indent=2)
 

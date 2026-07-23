@@ -189,6 +189,18 @@ def connect_and_discover(server_id: str, srv: dict) -> list[dict]:
         "entrypoint": [srv.get("command", "python")] + srv.get("args", []),
     })
     client.connect()
+    # Capture the server's ``instructions`` from the handshake as its
+    # canonical, author-written description.  Prefer the handshake value;
+    # fall back to any description already recorded in the registry entry.
+    instructions = ""
+    try:
+        instructions = client.get_instructions() or ""
+    except Exception:
+        logger.debug("Failed to read MCP instructions for %s", server_id, exc_info=True)
+    if instructions:
+        srv["description"] = instructions
+    elif "description" not in srv:
+        srv["description"] = ""
     tools_info = client.list_tools()
     with _pool_lock:
         _connection_pool[server_id] = client
