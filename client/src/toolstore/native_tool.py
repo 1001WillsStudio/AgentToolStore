@@ -213,7 +213,7 @@ def _do_info(tool_name: str) -> str:
             "server_id": actual_sid,
             "type": "mcp_toolset",
             "exposure": srv_info.get("exposure", "secondary") if isinstance(srv_info, dict) else "secondary",
-            "description": f"MCP server with {len(mcp_tools)} tool{'s' if len(mcp_tools) != 1 else ''}",
+            "description": "MCP server",
             "functions": functions,
         }, indent=2)
 
@@ -302,15 +302,12 @@ def _do_secondary_prompt(tool_names: List[str]) -> str:
     for name in tool_names:
         # Direct server-id match (e.g. "echo-server")
         if name in mcp_tools_by_server:
-            tool_count = len(mcp_tools_by_server[name])
             display = server_display.get(name, name)
-            lines.append(f"- {display} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
+            lines.append(f"- {display} (MCP server)")
             continue
         # display_name match (e.g. "Echo Service")
         if name in display_to_server:
-            sid = display_to_server[name]
-            tool_count = len(mcp_tools_by_server.get(sid, []))
-            lines.append(f"- {name} (MCP server, {tool_count} tool{'s' if tool_count != 1 else ''})")
+            lines.append(f"- {name} (MCP server)")
             continue
         tool = index_manager.get_tool(name)
         if not tool:
